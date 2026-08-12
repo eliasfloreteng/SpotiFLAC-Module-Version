@@ -42,9 +42,42 @@ jobs:
             echo "Already up to date with upstream."
             exit 0
           fi
-          # Fails on conflict, which is intentional: the run turns red and
-          # the merge is resolved manually.
-          git merge --no-edit FETCH_HEAD
+
+          before=$(git rev-parse HEAD)
+
+          # --no-ff so there is always a commit to rewrite below. Upstream is
+          # often strictly ahead of us, and a fast-forward would adopt its
+          # .github/workflows verbatim with nothing left to rewrite.
+          merge_failed=0
+          git merge --no-edit --no-ff FETCH_HEAD || merge_failed=1
+
+          if [ "$merge_failed" = 1 ]; then
+            # Conflicts under .github/workflows resolve themselves below.
+            # Anything else turns the run red and is merged by hand.
+            outside=$(git diff --name-only --diff-filter=U | grep -v '^\.github/workflows/' || true)
+            if [ -n "$outside" ]; then
+              echo "::error::Conflict with upstream, resolve manually:"
+              echo "$outside"
+              exit 1
+            fi
+          fi
+
+          # This fork keeps its own set of workflows (it drops upstream's PyPI
+          # and GHCR publishing and adds this job), and GITHUB_TOKEN may not
+          # push changes under .github/workflows at all, so upstream's copies
+          # are always discarded.
+          git rm -rqf --ignore-unmatch -- .github/workflows
+          if git rev-parse -q --verify "$before:.github/workflows" >/dev/null; then
+            git checkout "$before" -- .github/workflows
+          fi
+
+          if [ "$merge_failed" = 1 ]; then
+            git commit --no-edit
+          elif ! git diff --cached --quiet; then
+            git commit --amend --no-edit
+          fi
+
+          git --no-pager diff --stat "$before" HEAD -- .github/workflows
 
       - name: Push
         run: git push origin "HEAD:$TARGET_BRANCH"
