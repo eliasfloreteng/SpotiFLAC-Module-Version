@@ -24,16 +24,15 @@ _TURNSTILE_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
 _RELOAD_CHECK_SECONDS = 10.0
 _MAX_RELOAD_ATTEMPTS = 3
 
-# Se impostata a "1", la finestra del browser resta visibile e non viene
-# spostata fuori schermo né minimizzata. Utile per il debug via VNC in
-# Docker (vedi docker-entrypoint.sh + x11vnc). In produzione va lasciata
-# non impostata (o "0"), così il comportamento resta quello nascosto.
+# If set to "1", the browser window stays visible and is not moved off-screen
+# or minimized. Useful for VNC debugging in Docker (see docker-entrypoint.sh + x11vnc).
+# In production it should be left unset (or "0") so the behavior remains hidden.
 _DEBUG_VISIBLE = os.environ.get("TS_DEBUG_VISIBLE", "").strip() == "1"
 
 
-_docker_flags = []
-if os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() == 0:
-    _docker_flags = ["--no-sandbox", "--disable-dev-shm-usage"]
+_docker_flags = ["--no-sandbox", "--disable-dev-shm-usage"]
+_BROWSER_START_TIMEOUT_ENV = "TS_BROWSER_START_TIMEOUT"
+_DEFAULT_BROWSER_START_TIMEOUT_SECONDS = 45
 
 
 def _patch_nodriver_unknown_cdp_events() -> None:
@@ -130,7 +129,7 @@ def _default_browser_path_macos() -> str | None:
                 ["mdfind", f"kMDItemCFBundleIdentifier == '{bundle_id}'"],
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=30,
             )
             .stdout.strip()
             .splitlines()
@@ -157,7 +156,7 @@ def _default_browser_path_linux() -> str | None:
             ["xdg-settings", "get", "default-web-browser"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout.strip()
         if not desktop_name:
             return None
@@ -263,9 +262,8 @@ def _find_chrome() -> str:
         if path:
             return path
 
-    # 3. Fallback: usa il browser predefinito del sistema, se è
-    # Chromium-based (altrimenti pydoll non potrebbe comunque pilotarlo
-    # via CDP).
+    # 3. Fallback: use the system default browser if it is Chromium-based
+    # (otherwise pydoll would not be able to drive it via CDP).
     default_path = _get_default_browser_path()
     if default_path and os.path.exists(default_path):
         if _is_chromium_like(default_path):
@@ -276,8 +274,8 @@ def _find_chrome() -> str:
             )
             return default_path
         logger.debug(
-            "[solver] Il browser predefinito del sistema (%s) non è "
-            "basato su Chromium: ignorato.",
+            "[solver] The system default browser (%s) is not "
+            "Chromium-based: ignored.",
             default_path,
         )
 
@@ -355,10 +353,33 @@ def build_chromium_options(*, hidden: bool = True) -> ChromiumOptions:
     options = ChromiumOptions()
     options.binary_location = _find_chrome()
     options.headless = False
+
+    # pydoll uses a 10s default to verify the browser is alive after
+    # launching the renderer process. We expose the same contract via env and
+    # align the package's default with a 30s startup budget for Docker/CI, so
+    # browser startup isn't immediately killed by the upstream watchdog.
+    raw_start_timeout = os.environ.get(
+        _BROWSER_START_TIMEOUT_ENV,
+        str(_DEFAULT_BROWSER_START_TIMEOUT_SECONDS),
+    ).strip()
+    try:
+        start_timeout_seconds = int(raw_start_timeout)
+    except (TypeError, ValueError):
+        start_timeout_seconds = _DEFAULT_BROWSER_START_TIMEOUT_SECONDS
+    if start_timeout_seconds <= 0:
+        start_timeout_seconds = _DEFAULT_BROWSER_START_TIMEOUT_SECONDS
+    options.start_timeout = start_timeout_seconds
+
+    profile_dir = _get_profile_dir()
+    if os.path.exists(profile_dir):
+        try:
+            shutil.rmtree(profile_dir)
+        except Exception:
+            pass
     # A persistent profile dir. pydoll doesn't have a first-class
     # `user_data_dir` option (yet), so it's passed as a raw Chromium flag,
     # same as nodriver did internally.
-    options.add_argument(f"--user-data-dir={_get_profile_dir()}")
+    options.add_argument(f"--user-data-dir={profile_dir}")
     options.add_argument("--window-size=1280,900")
     if hidden and not debug_visible:
         # Push the (non-headless) window off-screen instead of using
@@ -383,6 +404,15 @@ def build_chromium_options(*, hidden: bool = True) -> ChromiumOptions:
         },
         "safebrowsing": {"enabled": True},
     }
+
+    logger.info(
+        "[solver] Chromium launch options prepared: binary=%s start_timeout=%ss profile_dir=%s hidden=%s debug_visible=%s",
+        options.binary_location,
+        options.start_timeout,
+        profile_dir,
+        hidden,
+        debug_visible,
+    )
 
     return options
 
@@ -442,6 +472,37 @@ async def _try_minimize_window(browser: Chrome) -> None:
         logger.debug("[solver] could not minimize browser window: %s", exc)
 
 
+def _describe_browser_start_error(
+    exc: Exception,
+    options: ChromiumOptions | None,
+) -> str:
+    binary = (
+        getattr(options, "binary_location", None)
+        or os.environ.get("CHROME_PATH")
+        or os.environ.get("BRAVE_PATH")
+        or "<unset>"
+    )
+    try:
+        binary_exists = os.path.exists(binary)
+    except Exception:
+        binary_exists = False
+    env_binary = (
+        os.environ.get("CHROME_PATH") or os.environ.get("BRAVE_PATH") or "<unset>"
+    )
+    display = os.environ.get("DISPLAY") or "<unset>"
+    profile_dir = _get_profile_dir()
+    start_timeout = (
+        getattr(options, "start_timeout", "n/a") if options is not None else "n/a"
+    )
+    return (
+        "Browser failed to start inside pydoll/Chrome launch. "
+        f"binary={binary!r} binary_exists={binary_exists} "
+        f"configured_chrome_env={env_binary} display={display} "
+        f"profile_dir={profile_dir} start_timeout={start_timeout}s "
+        f"OS={platform.system()} message={exc!r}"
+    )
+
+
 async def _solve_impl(
     sitekey: str,
     siteurl: str,
@@ -449,9 +510,34 @@ async def _solve_impl(
     capture_callback: bool = False,
     hold_open_seconds: float = 0.0,
 ) -> str | tuple[str, str | None]:
-    options = build_chromium_options(hidden=True)
-    browser = Chrome(options=options)
-    tab = await browser.start()
+    options: ChromiumOptions | None = None
+    browser = None
+    try:
+        options = build_chromium_options(hidden=True)
+    except Exception as exc:
+        message = _describe_browser_start_error(exc, options)
+        logger.error("[solver] %s", message)
+        raise RuntimeError(
+            "Browser failed to start. Verify the Chromium binary and Docker/host runtime; "
+            "the pydoll startup watchdog timed out or the browser process never became discoverable. "
+            "See the logs for the configured binary/profile/display details.",
+        ) from exc
+    try:
+        logger.info(
+            "[solver] launching browser through pydoll: binary=%s start_timeout=%ss",
+            options.binary_location,
+            getattr(options, "start_timeout", "n/a"),
+        )
+        browser = Chrome(options=options)
+        tab = await browser.start()
+    except Exception as exc:
+        message = _describe_browser_start_error(exc, options)
+        logger.error("[solver] %s", message)
+        raise RuntimeError(
+            "Browser failed to start. Verify the Chromium binary and Docker/host runtime; "
+            "the pydoll startup watchdog timed out or the browser process never became discoverable. "
+            "See the logs for the configured binary/profile/display details.",
+        ) from exc
     await _try_minimize_window(browser)
 
     callback_grant = _extract_grant_from_callback_url(siteurl)
@@ -476,7 +562,7 @@ async def _solve_impl(
             grant_val = data.get("grant")
             if isinstance(grant_val, str) and grant_val.strip():
                 network_grant["value"] = grant_val.strip()
-                logger.debug("[solver:net] grant catturato dalla rete")
+                logger.debug("[solver:net] grant captured from the network")
                 return
             if network_grant["value"] is None:
                 for key in ("token", "code"):
@@ -497,20 +583,62 @@ async def _solve_impl(
             pass
 
     async def _navigate_with_turnstile_bypass() -> None:
-        """Navigate to siteurl and let our own get_token()/network-grant
-        polling handle verification. pydoll's native
-        expect_and_bypass_cloudflare_captcha() is skipped: it loops forever
-        looking for a checkbox to click, but when Cloudflare auto-solves
-        (no click needed — common on residential/trusted IPs) that checkbox
-        never appears in the form it expects, so its retry loop never exits
-        even though the token/grant already succeeded server-side.
+        """Navigate to ``siteurl`` letting pydoll's native Turnstile helper
+        handle the click for us (shadow-DOM traversal + realistic click).
         """
-        await tab.go_to(siteurl)
+        # MOVED UP: enable network capture immediately so we don't miss auto-verification!
         await _enable_network_capture()
         await _try_minimize_window(browser)
 
+        async def _do_navigate():
+            try:
+                async with tab.expect_and_bypass_cloudflare_captcha(
+                    time_before_click=random.uniform(1.0, 2.0),
+                    time_to_wait_captcha=6,  # Lower the timeout to 6s so we don't block too long
+                ):
+                    await tab.go_to(siteurl)
+            except AttributeError:
+                # Older pydoll version without this helper
+                await tab.go_to(siteurl)
+            except Exception as exc:
+                logger.debug(
+                    "[solver] expect_and_bypass_cloudflare_captcha failed/skipped: %s",
+                    exc,
+                )
+
+        # Run navigation and captcha detection in a separate background task
+        nav_task = asyncio.create_task(_do_navigate())
+
+        # Poll continuously to see whether auto-verification succeeded
+        for _ in range(100):  # max 10 seconds
+            if nav_task.done():
+                break
+
+            # If the network already captured the grant, we can stop waiting for pydoll's click
+            if network_grant["value"]:
+                logger.info(
+                    "[solver] Grant captured from the network! Stopping wait for pydoll bypass."
+                )
+                break
+
+            # If the page shows "Verified" (or success status), we can stop waiting
+            try:
+                is_verified = await tab.execute_script(
+                    "return document.body.innerText.includes('Verified') || document.querySelector('.status.success') !== null;",
+                    return_by_value=True,
+                )
+                if _js_value(is_verified):
+                    logger.info(
+                        "[solver] 'Verified' found on the page! Stopping wait for pydoll bypass."
+                    )
+                    break
+            except Exception:
+                pass
+
+            await asyncio.sleep(0.1)
+
     async def _open_fresh_page() -> None:
-        """Ricarica siteurl da zero — usato per il retry con reload."""
+        """Reloads siteurl from scratch — used for retry with reload."""
         await _navigate_with_turnstile_bypass()
 
     async def get_token() -> str | None:
@@ -606,7 +734,7 @@ async def _solve_impl(
         if capture_callback:
             await capture_callback_grant()
             if callback_grant:
-                return None  # grant già ottenuto, verificato dal chiamante
+                return None  # grant already obtained, verified by the caller
 
         rect = None
         for _ in range(20):
