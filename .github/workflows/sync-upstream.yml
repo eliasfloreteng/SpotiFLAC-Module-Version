@@ -42,9 +42,29 @@ jobs:
             echo "Already up to date with upstream."
             exit 0
           fi
-          # Fails on conflict, which is intentional: the run turns red and
-          # the merge is resolved manually.
-          git merge --no-edit FETCH_HEAD
+
+          before=$(git rev-parse HEAD)
+
+          # --no-ff so the sync lands as our own merge commit: a fast-forward
+          # would put an upstream commit at HEAD, and the workflow fixup below
+          # would then rewrite it and break the next merge base.
+          git merge --no-commit --no-ff FETCH_HEAD || true
+
+          # .github/workflows is fork-owned: GITHUB_TOKEN cannot push workflow
+          # changes at all, and upstream carries neither this file nor the fork's
+          # removal of its PyPI/GHCR publish workflows. Keep our copies verbatim,
+          # conflicts included. Upstream workflow changes must be ported by hand.
+          git rm -r -q -f --ignore-unmatch .github/workflows
+          git checkout "$before" -- .github/workflows
+
+          # Any remaining conflict is real: leave it red and resolve it manually.
+          if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+            echo "Merge conflicts outside .github/workflows:"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+
+          git commit --no-edit
 
       - name: Push
         run: git push origin "HEAD:$TARGET_BRANCH"
