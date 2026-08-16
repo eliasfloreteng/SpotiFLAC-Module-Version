@@ -26,8 +26,10 @@ Requirements:
     - Extension installed via ExtensionManager
 """
 
+from .catalog import SERVICE_ALIASES, extension_id
 from .manager import REGISTRY_URL, ExtensionManager, InstalledExtension, RegistryEntry
 from .provider import JSExtensionProvider, make_extension_provider
+from .python_provider import PythonExtensionProvider
 from .runtime import ExtensionRuntimeError, JSRuntime
 
 __all__ = [
@@ -38,8 +40,11 @@ __all__ = [
     "InstalledExtension",
     # Provider
     "JSExtensionProvider",
+    "PythonExtensionProvider",
     # Runtime
     "JSRuntime",
     "RegistryEntry",
+    "SERVICE_ALIASES",
+    "extension_id",
     "make_extension_provider",
 ]

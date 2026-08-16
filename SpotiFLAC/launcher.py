@@ -95,23 +95,11 @@ def parse_args(profile_defaults: dict | None = None) -> argparse.Namespace:
     )
 
     def _service_type(value: str) -> str:
-        native_services = {
-            "deezer",
-            "tidal",
-            "qobuz",
-            "amazon",
-            "joox",
-            "netease",
-            "migu",
-            "kuwo",
-            "soundcloud",
-            "youtube",
-            "apple",
-            "pandora",
-        }
-        if value in native_services or value.startswith("ext:"):
+        from .extensions.catalog import known_service
+
+        if known_service(value):
             return value
-        msg = f"invalid service: '{value}'. ``--service`` accepts native providers or ext:<name> extensions."
+        msg = f"invalid service: '{value}'. Use ext:<name> or a supported compatibility alias."
         raise argparse.ArgumentTypeError(
             msg,
         )
@@ -121,10 +109,10 @@ def parse_args(profile_defaults: dict | None = None) -> argparse.Namespace:
         "-s",
         type=_service_type,
         nargs="+",
-        default=pd.get("services", ["tidal"]),
+        default=pd.get("services", ["ext:tidal-web"]),
         metavar="SERVICE",
-        help="Audio providers in priority order (default: tidal). "
-        "Choices: tidal, qobuz, deezer, amazon, joox, netease, migu, kuwo, soundcloud, youtube, apple, pandora, or ext:<name>",
+        help="Extension providers in priority order (default: ext:tidal-web). "
+        "Use ext:<name>; historical service aliases remain supported.",
     )
     parser.add_argument(
         "--filename-format",
@@ -226,6 +214,27 @@ def parse_args(profile_defaults: dict | None = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Launch graphical user interface (GUI)",
+    )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        default=False,
+        help="Launch the GUI as a local web server instead of a native window "
+        "(same interface, open it at http://<host>:<port> in a browser)",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind --web to. Defaults to 127.0.0.1 (this machine only). "
+        "Binding to 0.0.0.0 or a LAN address exposes the GUI — including "
+        "download-triggering endpoints — to anyone who can reach it, with "
+        "no authentication. Only do this deliberately.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind --web to (default: 8000)",
     )
 
     # ── Profile ─────────────────────────────────────────────────────────────
@@ -491,6 +500,19 @@ async def amain() -> None:
         from .app import run_gui
 
         run_gui()
+        return
+
+    if "--web" in sys.argv:
+        # --host/--port need the parsed args (argparse), not a raw sys.argv
+        # scan like the flags above, since they take a value.
+        web_parser = argparse.ArgumentParser(add_help=False)
+        web_parser.add_argument("--host", default="127.0.0.1")
+        web_parser.add_argument("--port", type=int, default=8000)
+        web_args, _ = web_parser.parse_known_args(sys.argv[1:])
+
+        from .webapp import run_async as run_web
+
+        await run_web(host=web_args.host, port=web_args.port)
         return
 
     if "--interactive" in sys.argv:
