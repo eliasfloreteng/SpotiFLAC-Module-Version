@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import shlex
 import sys
 from urllib.parse import urlparse
 
@@ -503,6 +504,8 @@ def _summary(cfg: dict) -> None:
 
     if cfg["first_artist_only"]:
         flags.append("first-artist-only")
+    if cfg.get("artist_separator"):
+        flags.append(f"artist-separator: '{cfg['artist_separator']}'")
     row("Options", ", ".join(flags) if flags else "none")
 
     row(
@@ -525,6 +528,9 @@ def _summary(cfg: dict) -> None:
     retries = cfg.get("track_max_retries", 0)
     if retries:
         row("Retries per track", str(retries))
+
+    concurrent = cfg.get("max_concurrent_downloads", 2)
+    row("Parallel downloads", str(concurrent))
 
     timeout = cfg.get("timeout_s", 0)
     if timeout:
@@ -579,9 +585,21 @@ async def run_interactive() -> dict:
         )
         backup = _ask_bool("Create .bak backups before overwriting?", True)
 
+        sep = _ask(
+            "Artist separator (leave blank for standard multi-value tags, e.g. ', ' or ' / ')",
+            "",
+        )
+        artist_separator = sep if sep else None
+
         from .core.local_processor import run_local_tagging_cli
 
-        await run_local_tagging_cli(path, dry_run=dry_run, force=force, backup=backup)
+        await run_local_tagging_cli(
+            path,
+            dry_run=dry_run,
+            force=force,
+            backup=backup,
+            artist_separator=artist_separator,
+        )
         sys.exit(0)
 
     # ── Health check ────────────────────────────────────────────────────────
@@ -873,17 +891,17 @@ async def run_interactive() -> dict:
         elif has_qobuz or has_tidal or has_deezer or has_apple:
             combined_options = [
                 "LOSSLESS (FLAC on Deezer/Tidal, '6' on Qobuz, ALAC on Apple)",
-                "HI_RES (Best available everywhere, '27' on Qobuz)",
+                "HI_RES_LOSSLESS (Best available everywhere, '27' on Qobuz)",
             ]
             if has_apple:
                 combined_options.append(
-                    "ATMOS (Spatial Audio on Apple, HI_RES elsewhere)",
+                    "ATMOS (Spatial Audio on Apple, HI_RES_LOSSLESS elsewhere)",
                 )
                 combined_options.append("AC3 (Dolby Digital on Apple, HIGH elsewhere)")
             if has_tidal:
                 combined_options.insert(
                     1,
-                    "DOLBY_ATMOS (Dolby Atmos on Tidal, HI_RES elsewhere)",
+                    "DOLBY_ATMOS (Dolby Atmos on Tidal, HI_RES_LOSSLESS elsewhere)",
                 )
             if has_qobuz:
                 combined_options.append("7 (Hi-Res mid on Qobuz only)")
@@ -905,8 +923,8 @@ async def run_interactive() -> dict:
             )
             if q_choice.startswith("LOSSLESS"):
                 cfg["quality"] = "LOSSLESS"
-            elif q_choice.startswith("HI_RES"):
-                cfg["quality"] = "HI_RES"
+            elif q_choice.startswith("HI_RES_LOSSLESS"):
+                cfg["quality"] = "HI_RES_LOSSLESS"
             elif q_choice.startswith("DOLBY_ATMOS"):
                 cfg["quality"] = "DOLBY_ATMOS"
             elif q_choice.startswith("ATMOS"):
@@ -924,7 +942,7 @@ async def run_interactive() -> dict:
         else:
             q = _ask_choice(
                 "Quality:",
-                options=["LOSSLESS", "HI_RES", "HIGH"],
+                options=["LOSSLESS", "HI_RES_LOSSLESS", "HIGH"],
                 default="LOSSLESS",
             )
             cfg["quality"] = normalize_quality(q)
@@ -1016,6 +1034,15 @@ async def run_interactive() -> dict:
             cfg["first_artist_only"],
         )
 
+    if not cfg["first_artist_only"]:
+        sep = _ask(
+            "Artist separator (leave blank for standard multi-value tags, e.g. ', ' or ' / ')",
+            cfg.get("artist_separator") or "",
+        )
+        cfg["artist_separator"] = sep if sep else None
+    else:
+        cfg["artist_separator"] = None
+
     # ── 7. Lyrics ────────────────────────────────────────────────────────────
     _section("7 · Lyrics")
     cfg["embed_lyrics"] = _ask_bool(
@@ -1069,6 +1096,18 @@ async def run_interactive() -> dict:
         cfg["track_max_retries"] = max(0, int(retry_str))
     except ValueError:
         cfg["track_max_retries"] = 0
+
+    # ── 9.3. Concurrency ─────────────────────────────────────────────────
+    _section("9.3 · Concurrency")
+    default_concurrent = cfg.get("max_concurrent_downloads", 2)
+    concurrent_str = _ask(
+        "Tracks to download in parallel (1 = sequential, no interleaved output)",
+        str(default_concurrent),
+    )
+    try:
+        cfg["max_concurrent_downloads"] = max(1, int(concurrent_str))
+    except ValueError:
+        cfg["max_concurrent_downloads"] = default_concurrent
 
     # ── 9.5. Timeout ───────────────────────────────────────────────────
     _section("9.5 · Download Timeout")
@@ -1182,6 +1221,8 @@ def _print_cli_command(cfg: dict) -> None:
 
     if cfg["first_artist_only"]:
         parts.append("--first-artist-only")
+    if cfg.get("artist_separator"):
+        parts.append(f'--artist-separator {shlex.quote(cfg["artist_separator"])}')
     if not cfg["embed_lyrics"]:
         parts.append("--no-lyrics")
     else:
@@ -1192,6 +1233,8 @@ def _print_cli_command(cfg: dict) -> None:
         parts.append(f"--enrich-providers {' '.join(cfg['enrich_providers'])}")
     if cfg.get("track_max_retries"):
         parts.append(f"--retries {cfg['track_max_retries']}")
+    if cfg.get("max_concurrent_downloads", 2) != 2:
+        parts.append(f"--max-concurrent {cfg['max_concurrent_downloads']}")
     if cfg.get("timeout_s"):
         parts.append(f"--timeout {cfg['timeout_s']}")
     if cfg.get("post_download_action") and cfg["post_download_action"] != "none":

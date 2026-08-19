@@ -22,6 +22,7 @@ import os
 import sys
 
 from .check_update import check_for_updates_async
+from .client import _CleanConsoleFormatter
 from .downloader import DownloadOptions, SpotiflacDownloader
 from .interactive import run_interactive
 
@@ -244,6 +245,17 @@ def parse_args(profile_defaults: dict | None = None) -> argparse.Namespace:
         default=pd.get("first_artist_only", False),
     )
     parser.add_argument(
+        "--artist-separator",
+        dest="artist_separator",
+        default=pd.get("artist_separator", None),
+        metavar="SEP",
+        help="Join multiple artists into one ARTIST/ALBUMARTIST tag with this "
+        "separator (e.g. ', ' or ' / ') instead of writing them as a "
+        "multi-value field. Useful for players like Rekordbox that join "
+        "multi-value fields with a bare space, mashing artist names "
+        "together with no separator at all.",
+    )
+    parser.add_argument(
         "--include-featuring",
         action="store_true",
         dest="include_featuring",
@@ -412,6 +424,20 @@ def parse_args(profile_defaults: dict | None = None) -> argparse.Namespace:
         "Retries cycle through all providers with exponential backoff (2s, 4s, 8s…).",
     )
 
+    # ── Concurrency ──────────────────────────────────────────────────────────
+    concurrency_grp = parser.add_argument_group("Concurrency")
+    concurrency_grp.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=pd.get("max_concurrent_downloads", 2),
+        dest="max_concurrent",
+        metavar="N",
+        help="How many tracks to download at once (default: 2). Each one still "
+        "tries its providers in order/fallback on its own — this only "
+        "controls how many tracks run at the same time. Use 1 for fully "
+        "sequential downloads with no interleaved console output.",
+    )
+
     # ── Timeout ──────────────────────────────────────────────────────────────
     timeout_grp = parser.add_argument_group("Timeout")
     timeout_grp.add_argument(
@@ -494,6 +520,7 @@ async def _run_download_async(
     loop: int | None,
     quality: str,
     first_artist_only: bool,
+    artist_separator: str | None = None,
     include_featuring: bool,
     log_level: int,
     output_path: str | None,
@@ -514,6 +541,7 @@ async def _run_download_async(
     transcode_keep_original: bool = False,
     playlist_urls: list[str] | None = None,
     m3u_format: str = "m3u8",
+    max_concurrent_downloads: int = 2,
 ) -> None:
     """Bridge async verso SpotiflacDownloader, senza passare per il wrapper
     sincrono `SpotiFLAC()` (che farebbe un `asyncio.run()` annidato e
@@ -522,8 +550,11 @@ async def _run_download_async(
     logger = logging.getLogger("SpotiFLAC")
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
+        handler.setFormatter(
+            _CleanConsoleFormatter("[%(levelname)s] %(name)s: %(message)s")
+        )
         logger.addHandler(handler)
+        logger.propagate = False
     logger.setLevel(log_level)
 
     opts = DownloadOptions(
@@ -537,6 +568,7 @@ async def _run_download_async(
         use_album_subfolders=use_album_subfolders,
         quality=quality,
         first_artist_only=first_artist_only,
+        artist_separator=artist_separator,
         output_path=output_path,
         embed_lyrics=embed_lyrics,
         lyrics_providers=lyrics_providers,
@@ -552,6 +584,7 @@ async def _run_download_async(
         transcode_to=transcode_to,
         transcode_bitrate=transcode_bitrate,
         transcode_keep_original=transcode_keep_original,
+        max_concurrent_downloads=max(1, max_concurrent_downloads),
     )
 
     try:
@@ -637,6 +670,9 @@ async def amain() -> None:
         local_parser.add_argument("--dry-run", action="store_true", default=False)
         local_parser.add_argument("--force", action="store_true", default=False)
         local_parser.add_argument("--no-backup", action="store_true", default=False)
+        local_parser.add_argument(
+            "--artist-separator", dest="artist_separator", default=None
+        )
         local_args, _ = local_parser.parse_known_args(sys.argv[1:])
 
         from .core.local_processor import run_local_tagging_cli
@@ -646,6 +682,7 @@ async def amain() -> None:
             dry_run=local_args.dry_run,
             force=local_args.force,
             backup=not local_args.no_backup,
+            artist_separator=local_args.artist_separator,
         )
         return
 
@@ -654,10 +691,13 @@ async def amain() -> None:
         cfg = await run_interactive()
 
         log_level = logging.WARNING
-        logging.basicConfig(
-            level=log_level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        _root_handler = logging.StreamHandler(sys.stdout)
+        _root_handler.setFormatter(
+            _CleanConsoleFormatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
         )
+        logging.basicConfig(level=log_level, handlers=[_root_handler])
 
         await _run_download_async(
             cfg["url"],
@@ -671,7 +711,8 @@ async def amain() -> None:
             loop=cfg.get("loop"),
             quality=cfg["quality"],
             first_artist_only=cfg["first_artist_only"],
-            include_featuring=cfg.get("include_featuring", False),
+            artist_separator=cfg.get("artist_separator"),
+            include_featuring=cfg.get("include_featuring", True),
             log_level=log_level,
             output_path=cfg.get("output_path"),
             allow_fallback=cfg.get("allow_fallback", True),
@@ -689,6 +730,7 @@ async def amain() -> None:
             transcode_to=cfg.get("transcode_to"),
             transcode_bitrate=cfg.get("transcode_bitrate", "320k"),
             transcode_keep_original=cfg.get("transcode_keep_original", False),
+            max_concurrent_downloads=cfg.get("max_concurrent_downloads", 2),
         )
         return
 
@@ -765,7 +807,9 @@ async def amain() -> None:
         if args.verbose
         else "%(levelname)s: %(message)s"
     )
-    logging.basicConfig(level=log_level, format=log_format)
+    _cli_handler = logging.StreamHandler(sys.stdout)
+    _cli_handler.setFormatter(_CleanConsoleFormatter(log_format))
+    logging.basicConfig(level=log_level, handlers=[_cli_handler])
 
     await _run_download_async(
         args.url or "",
@@ -799,6 +843,7 @@ async def amain() -> None:
         transcode_keep_original=args.transcode_keep_original,
         playlist_urls=playlist_urls,
         m3u_format=args.m3u_format,
+        max_concurrent_downloads=args.max_concurrent,
     )
 
     if args.save_profile:
@@ -814,6 +859,7 @@ async def amain() -> None:
                 "use_artist_subfolders": args.use_artist_subfolders,
                 "use_album_subfolders": args.use_album_subfolders,
                 "first_artist_only": args.first_artist_only,
+                "artist_separator": args.artist_separator,
                 "include_featuring": args.include_featuring,
                 "allow_fallback": True,
                 "embed_lyrics": args.embed_lyrics,
@@ -831,6 +877,7 @@ async def amain() -> None:
                 "tidal_custom_api": tidal_custom_api,
                 "timeout_s": timeout_s,
                 "loop": args.loop,
+                "max_concurrent_downloads": args.max_concurrent,
             }
             await save_profile_async(args.save_profile, profile_cfg)
         except Exception:

@@ -32,6 +32,7 @@ class ProfileConfig(BaseModel):
     use_artist_subfolders: bool = False
     use_album_subfolders: bool = False
     first_artist_only: bool = False
+    artist_separator: str | None = None
     allow_fallback: bool = True
     quality: str = "LOSSLESS"
     embed_lyrics: bool = True
