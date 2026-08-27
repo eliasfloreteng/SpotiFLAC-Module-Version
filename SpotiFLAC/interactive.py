@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from .core.health_check import run_health_check
 from .core.quality import normalize_quality
+from .core.url_utils import url_host_matches
 from .extensions.catalog import SERVICE_ALIASES
 from .extensions.manager import ExtensionManager
 
@@ -164,6 +165,7 @@ def _section(title: str) -> None:
 def _header() -> None:
     print(f"\n{BOLD(MAGENTA('SpotiFLAC — Interactive Mode'))}")
     print(DIM("=" * 40))
+    print(DIM("  Tip: enter b/back/indietro at any question to restart the wizard."))
 
 
 def _canonical_service_name(ext_name: str) -> str | None:
@@ -654,6 +656,8 @@ def _summary(cfg: dict) -> None:
         row("Custom Tidal API", cfg["tidal_custom_api"])
     if cfg.get("loop"):
         row("Loop", f"every {cfg['loop']} minutes")
+    if cfg.get("watch"):
+        row("Watch", f"re-sync every {cfg['watch']} minutes, forever")
 
 
 # ---------------------------------------------------------------------------
@@ -713,7 +717,7 @@ async def _run_interactive_once() -> dict:
         lower_url = url.lower()
         is_blocked = False
 
-        if ("youtube.com" in lower_url or "youtu.be" in lower_url) and (
+        if url_host_matches(url, "youtube.com", "youtu.be") and (
             "/channel/" in lower_url
             or "/user/" in lower_url
             or "/c/" in lower_url
@@ -722,7 +726,7 @@ async def _run_interactive_once() -> dict:
         ):
             is_blocked = True
 
-        elif "soundcloud.com" in lower_url:
+        elif url_host_matches(url, "soundcloud.com"):
             path = urlparse(url).path.strip("/")
             parts = [p for p in path.split("/") if p]
             if len(parts) == 1 and parts[0] not in ("discover", "stream", "upload"):
@@ -790,18 +794,15 @@ async def _run_interactive_once() -> dict:
     is_single_track = (
         "/track/" in lower_url
         or ("watch?v=" in lower_url and "list=" not in lower_url)
-        or ("youtu.be" in lower_url)
-        or ("music.apple.com" in lower_url and "?i=" in lower_url)
+        or url_host_matches(url, "youtu.be")
+        or (url_host_matches(url, "music.apple.com") and "?i=" in lower_url)
+        or (url_host_matches(url, "soundcloud.com") and "/sets/" not in lower_url)
         or (
-            ("soundcloud.com" in lower_url or "on.soundcloud.com" in lower_url)
-            and "/sets/" not in lower_url
-        )
-        or (
-            "pandora.com" in lower_url
+            url_host_matches(url, "pandora.com")
             and "/artist/" in lower_url
             and lower_url.count("/") >= 5
         )
-        or ("pandora.app.link" in lower_url)
+        or url_host_matches(url, "pandora.app.link")
     )
     if is_single_track:
         _section("2.5 · Custom Output Path")
@@ -823,16 +824,10 @@ async def _run_interactive_once() -> dict:
     # ── 3. Services ──────────────────────────────────────────────────────────
     _section("3 · Audio Services")
 
-    is_soundcloud_url = (
-        "soundcloud.com" in cfg["url"] or "on.soundcloud.com" in cfg["url"]
-    )
-    is_apple_url = "music.apple.com" in cfg["url"]
-    is_youtube_url = (
-        "youtube.com" in cfg["url"].lower() or "youtu.be" in cfg["url"].lower()
-    )
-    is_pandora_url = (
-        "pandora.com" in cfg["url"].lower() or "pandora.app.link" in cfg["url"].lower()
-    )
+    is_soundcloud_url = url_host_matches(cfg["url"], "soundcloud.com")
+    is_apple_url = url_host_matches(cfg["url"], "music.apple.com")
+    is_youtube_url = url_host_matches(cfg["url"], "youtube.com", "youtu.be")
+    is_pandora_url = url_host_matches(cfg["url"], "pandora.com", "pandora.app.link")
 
     installed_services = _require_installed_service_options()
 
@@ -972,12 +967,16 @@ async def _run_interactive_once() -> dict:
             )
             cfg["quality"] = normalize_quality(q_choice.split(" ")[0])
         elif has_tidal and not (has_qobuz or has_deezer or has_apple):
+            # DOLBY_ATMOS is only ever offered here, in the Tidal-exclusive
+            # branch — core/quality.py's quality_for_provider() would
+            # downgrade it to HI_RES_LOSSLESS for any other provider anyway,
+            # so it would be misleading to present it as a choice elsewhere.
             tidal_default = str(cfg.get("quality", "LOSSLESS") or "LOSSLESS").upper()
-            if tidal_default not in ["HI_RES_LOSSLESS", "LOSSLESS"]:
+            if tidal_default not in ["HI_RES_LOSSLESS", "LOSSLESS", "DOLBY_ATMOS"]:
                 tidal_default = "LOSSLESS"
             q = _ask_choice(
                 "Tidal Quality:",
-                options=["HI_RES_LOSSLESS", "LOSSLESS"],
+                options=["HI_RES_LOSSLESS", "LOSSLESS", "DOLBY_ATMOS"],
                 default=tidal_default,
             )
             cfg["quality"] = normalize_quality(q)
@@ -1090,7 +1089,7 @@ async def _run_interactive_once() -> dict:
         )
     else:
         cfg["create_playlist_subfolders"] = (
-            True  # Mantieni il default se non è una playlist
+            True  # Keep the default when this isn't a playlist
         )
 
     cfg["use_track_numbers"] = _ask_bool(
@@ -1177,9 +1176,10 @@ async def _run_interactive_once() -> dict:
     if cfg["enrich_metadata"]:
         cfg["enrich_providers"] = _ask_multi(
             "Enrichment providers (order = priority):",
+            # SoundCloud stays selectable but isn't pre-checked below.
             options=["deezer", "apple", "qobuz", "tidal", "soundcloud"],
             defaults=cfg.get("enrich_providers")
-            or ["deezer", "apple", "qobuz", "tidal", "soundcloud"],
+            or ["deezer", "apple", "qobuz", "tidal"],
             ordered=True,
         )
     else:
@@ -1188,7 +1188,6 @@ async def _run_interactive_once() -> dict:
             "apple",
             "qobuz",
             "tidal",
-            "soundcloud",
         ]
 
     # ── 9. Retry ────────────────────────────────────────────────────────────
@@ -1273,6 +1272,13 @@ async def _run_interactive_once() -> dict:
     )
     cfg["loop"] = int(loop_str) if loop_str.isdigit() else None
 
+    # ── 12.5. Watch ──────────────────────────────────────────────────────────
+    watch_str = _ask(
+        "Keep syncing this URL every N minutes, forever (leave blank to run once)",
+        str(cfg.get("watch", "")),
+    )
+    cfg["watch"] = int(watch_str) if watch_str.isdigit() else None
+
     # ── Profile save ────────────────────────────────────────────────────────
     await _profile_save_section(cfg)
 
@@ -1351,6 +1357,8 @@ def _print_cli_command(cfg: dict) -> None:
         parts.extend(["--tidal-api", cfg["tidal_custom_api"]])
     if cfg.get("loop"):
         parts.extend(["--loop", str(cfg["loop"])])
+    if cfg.get("watch"):
+        parts.extend(["--watch", str(cfg["watch"])])
 
     command = " \\\n    ".join(shlex.quote(part) for part in parts)
     print(f"\n  {command}\n")

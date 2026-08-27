@@ -67,6 +67,7 @@ from .core.transcode import (
     transcode_file_async,
     transcoded_file_exists,
 )
+from .core.url_utils import url_host_has_label, url_host_matches
 
 if TYPE_CHECKING:
     from .core.base import BaseProvider
@@ -147,8 +148,10 @@ class DownloadOptions:
     )
 
     enrich_metadata: bool = True
+    # SoundCloud isn't checked by default — still selectable (GUI checklist,
+    # --enrich-providers, the interactive wizard), just opt-in now.
     enrich_providers: list[str] = field(
-        default_factory=lambda: ["deezer", "apple", "qobuz", "tidal", "soundcloud"],
+        default_factory=lambda: ["deezer", "apple", "qobuz", "tidal"],
     )
     qobuz_token: str | None = None
     qobuz_local_api_url: str | None = None
@@ -218,8 +221,8 @@ def _build_providers_for_name(name: str, opts: DownloadOptions) -> list[BaseProv
         wants_explicit_js = "-web" in name.lower()
         wants_explicit_py = "-py" in name.lower()
 
-        # 1. TENTATIVO PYTHON (Priorità 1)
-        # Se l'utente NON ha digitato esplicitamente "-web", prova ad usare Python
+        # 1. PYTHON ATTEMPT (Priority 1)
+        # If the user did NOT explicitly type "-web", try using Python
         if not wants_explicit_js:
             py_candidate_name = manager.find_python_extension(base_name)
 
@@ -689,7 +692,7 @@ async def download_one_async(
                     _, ext = os.path.splitext(result.file_path)
                     base_target, _ = os.path.splitext(opts.output_path)
                     target = base_target + ext
-                    # Spostamento delegato all'I/O asincrono
+                    # Move delegated to the async I/O
                     await _move_file_async(result.file_path, target)
                     result = DownloadResult.ok(
                         result.provider,
@@ -880,7 +883,6 @@ class DownloadWorker:
         as_completed version, but inside a TaskGroup that ensures: if a worker
         raises an unexpected exception, all other tasks in the group are
         cleanly cancelled instead of continuing.
-        silenziosamente.
         """
         max_concurrent = max(1, getattr(self._opts, "max_concurrent_downloads", 2))
         semaphore = asyncio.Semaphore(max_concurrent)
@@ -1272,7 +1274,7 @@ class SpotiflacDownloader:
             try:
                 collection_name, tracks, info = await self._resolve_metadata_async(url)
             except SpotiflacError as exc:
-                # Una playlist irraggiungibile non deve far saltare le altre.
+                # An unreachable playlist shouldn't skip the others.
                 logger.error("[playlists] %s: %s", url, exc)
                 continue
 
@@ -1285,8 +1287,8 @@ class SpotiflacDownloader:
             # which playlist is being processed is useful right there.
             print_playlist_resolved(name, len(tracks), url)
 
-            # SoundCloud e Pandora non espongono ISRC: la risoluzione bulk
-            # sarebbe solo tempo perso (come in _run_once_async).
+            # SoundCloud and Pandora don't expose ISRC: bulk resolution
+            # would just be wasted time (same as in _run_once_async).
             lowered = url.lower()
             if not any(
                 host in lowered
@@ -1425,18 +1427,18 @@ class SpotiflacDownloader:
 
         is_tidal = is_tidal_url(url)
         is_apple = is_apple_music_url(url)
-        is_soundcloud = "soundcloud.com" in url or "on.soundcloud.com" in url
-        is_youtube = "youtube.com" in url or "youtu.be" in url
-        is_pandora = "pandora.com" in url or "pandora.app.link" in url
+        is_soundcloud = url_host_matches(url, "soundcloud.com")
+        is_youtube = url_host_matches(url, "youtube.com", "youtu.be")
+        is_pandora = url_host_matches(url, "pandora.com", "pandora.app.link")
 
-        if "deezer.com" in url or "deezer.page.link" in url:
+        if url_host_matches(url, "deezer.com", "deezer.page.link"):
             raise SpotiflacError(
                 ErrorKind.INVALID_URL,
                 "Providing Deezer URLs as primary input is not yet fully supported. "
                 "Use a Spotify link and set 'deezer' as the download provider.",
             )
 
-        if "amazon." in url.lower():
+        if url_host_has_label(url, "amazon"):
             raise SpotiflacError(
                 ErrorKind.INVALID_URL,
                 "Amazon links cannot be inserted.",
@@ -1730,8 +1732,8 @@ class SpotiflacDownloader:
             )
             effective_opts = replace(effective_opts, output_path=None)
 
-        is_soundcloud = "soundcloud.com" in url or "on.soundcloud.com" in url
-        is_pandora = "pandora.com" in url or "pandora.app.link" in url
+        is_soundcloud = url_host_matches(url, "soundcloud.com")
+        is_pandora = url_host_matches(url, "pandora.com", "pandora.app.link")
 
         existing_paths: dict[str, Path] = {}
         if not is_soundcloud and not is_pandora:

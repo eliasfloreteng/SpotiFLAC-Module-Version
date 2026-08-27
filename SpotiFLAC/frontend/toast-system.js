@@ -1,5 +1,18 @@
 // /frontend/toast-system.js
 
+// Toast messages/titles can come from arbitrary sources (thrown exceptions,
+// server error bodies, filenames, ...) and get inserted via innerHTML below
+// for markup convenience — escape them first so that text is always
+// rendered as text, never reinterpreted as HTML/script.
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 class ToastManager {
   constructor() {
     this.toastId = 0;
@@ -83,7 +96,7 @@ class ToastManager {
   show(message, options = {}) {
     const opts = {
       type: 'info',
-      duration: options.type === 'loading' ? 0 : 3500, // loading non si chiude da solo
+      duration: options.type === 'loading' ? 0 : 3500, // loading doesn't auto-close
       position: 'bottom-right',
       dismissible: true,
       title: '',
@@ -111,8 +124,10 @@ class ToastManager {
       iconHtml = `<div class="toast-icon">${opts.icon}</div>`;
     }
 
-    // Contenuti
-    let titleHtml = opts.title ? `<div class="toast-title">${opts.title}</div>` : '';
+    // Contenuti — title/message are escaped: they can come from arbitrary
+    // data (exception text, server responses, filenames) and must always
+    // render as plain text, never as HTML.
+    let titleHtml = opts.title ? `<div class="toast-title">${escapeHtml(opts.title)}</div>` : '';
     let dismissHtml = opts.dismissible ? `<button class="toast-close" onclick="toastMgr.dismiss('${id}')">×</button>` : '';
     let progressHtml = opts.duration > 0 ? `<div class="toast-progress" style="animation-duration: ${opts.duration}ms;"></div>` : '';
 
@@ -120,7 +135,7 @@ class ToastManager {
       ${iconHtml}
       <div class="toast-content">
         ${titleHtml}
-        <div class="toast-message">${message}</div>
+        <div class="toast-message">${escapeHtml(message)}</div>
       </div>
       ${dismissHtml}
       ${progressHtml}
@@ -152,7 +167,7 @@ class ToastManager {
       const exitClass = position.includes('left') ? 'slideOutLeft' : 'slideOutRight';
       
       toast.classList.add(exitClass);
-      // Rimuovi dopo l'animazione di uscita
+      // Remove after the exit animation
       setTimeout(() => {
         if (toast.parentNode) toast.parentNode.removeChild(toast);
       }, 300);

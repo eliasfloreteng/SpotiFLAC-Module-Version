@@ -36,7 +36,7 @@
   }
 
   const REMOTE_METHODS = [
-    'get_version', 'get_latest_version', 'get_artist_images', 'get_ffmpeg_status',
+    'get_version', 'get_latest_version', 'get_artist_images', 'get_ffmpeg_status', 'get_node_status',
     'save_settings', 'load_settings', 'get_registries', 'add_registry', 'remove_registry',
     'get_history', 'get_profiles', 'load_profile_data', 'cache_image', 'get_spotify_home_feed',
     'search_provider', 'search_provider_async', 'search_code', 'remove_history_item',
@@ -45,6 +45,9 @@
     'download_track_cover', 'download_cover', 'download_album_cover', 'download_all_covers',
     'download_all_lyrics', 'get_track_preview', 'fetch_metadata', 'download_tracks',
     'run_health_check', 'scan_local', 'apply_local_tags', 'set_download_dir',
+    'get_registry_directories', 'add_registry_directory', 'remove_registry_directory',
+    'discover_registries', 'get_dedup_status', 'scan_for_duplicates',
+    'get_trusted_keys', 'add_trusted_key', 'remove_trusted_key',
   ];
 
   const api = {};
@@ -140,6 +143,34 @@
 
   // ── WebSocket push channel: mirrors what pywebview's evaluate_js does
   //    for real desktop windows. See SpotiFLAC/app.py's _push().
+  //
+  // `fn` below names the global function to invoke and travels over the
+  // WebSocket message, so it's dispatched only against this explicit
+  // allowlist (kept in sync with every `self._push("...")` call site in
+  // app.py) rather than an unrestricted `window[fn](...)` — that keeps a
+  // compromised/malicious message from invoking arbitrary global functions.
+  const ALLOWED_PUSH_FNS = new Set([
+    '__set_version_label',
+    'app_cover_download_finished',
+    'app_download_finished',
+    'app_handle_provider_search_error',
+    'app_handle_provider_search_results',
+    'app_local_apply_error',
+    'app_local_apply_finished',
+    'app_local_apply_progress',
+    'app_local_scan_error',
+    'app_local_scan_results',
+    'app_log',
+    'app_set_metadata',
+    'app_set_progress',
+    'app_update_download_stats',
+    'loadHistoryAndProfiles',
+    'showFfmpegWarning',
+    'showTracklist',
+    'updateFolderLabel',
+    'updateHealthResults',
+  ]);
+
   function connectWs() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(proto + '//' + location.host + '/ws');
@@ -158,12 +189,14 @@
         }
         return;
       }
-      if (typeof window[fn] === 'function') {
+      if (typeof fn === 'string' && ALLOWED_PUSH_FNS.has(fn) && typeof window[fn] === 'function') {
         try {
           window[fn](...args);
         } catch (e) {
           console.error('web-shim: error dispatching', fn, e);
         }
+      } else if (fn) {
+        console.warn('web-shim: ignoring push for non-allowlisted function', fn);
       }
     };
     ws.onclose = () => {

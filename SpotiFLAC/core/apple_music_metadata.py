@@ -1,5 +1,5 @@
-"""AppleMusicMetadataClient — retrieves metadati di tracks/album/artisti/playlist
-tramite la AMP API pubblica di Apple Music.
+"""AppleMusicMetadataClient — retrieves track/album/artist/playlist metadata
+via Apple Music's public AMP API.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typing_extensions import Self
 from SpotiFLAC.core.errors import AuthError, ErrorKind, InvalidUrlError, SpotiflacError
 from SpotiFLAC.core.http import AsyncHttpClient
 from SpotiFLAC.core.models import TrackMetadata
+from SpotiFLAC.core.url_utils import url_host_matches
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +62,11 @@ def _extract_jwt_from_string(text: str) -> str | None:
 
 
 def is_apple_music_url(url: str) -> bool:
-    return "music.apple.com" in url.lower()
+    return url_host_matches(url, "music.apple.com")
 
 
 def parse_apple_music_url(url: str) -> dict[str, str]:
-    """Parse un URL Apple Music e restituisce type, id e storefront."""
+    """Parses an Apple Music URL and returns type, id, and storefront."""
     url = (url or "").strip()
 
     m = re.search(
@@ -149,7 +150,7 @@ class AppleMusicMetadataClient:
     # ------------------------------------------------------------------
 
     def _parse_token_expiry(self, token: str) -> None:
-        """Legge il campo `exp` dal payload JWT e imposta la scadenza interna."""
+        """Reads the `exp` field from the JWT payload and sets the internal expiry."""
         try:
             payload_b64 = token.split(".")[1]
             padded = payload_b64 + "=" * (-len(payload_b64) % 4)
@@ -162,10 +163,10 @@ class AppleMusicMetadataClient:
             self._token_expiry = _time.time() + 43200.0
 
     async def _get_token(self) -> str:
-        """Estrae il token JWT anonimo dal frontend web usando 3 strategie:
-        1. devToken=JWT nel sorgente HTML
-        2. Prefissi JWT noti nell'HTML
-        3. Bundle JS della pagina (saltando quelli legacy).
+        """Extracts the anonymous JWT token from the web frontend using 3 strategies:
+        1. devToken=JWT in the HTML source
+        2. Known JWT prefixes in the HTML
+        3. The page's JS bundles (skipping legacy ones).
         """
         if self._auth_token and _time.time() < self._token_expiry:
             return self._auth_token
@@ -279,7 +280,7 @@ class AppleMusicMetadataClient:
         first_next: str | None,
         label: str = "resource",
     ) -> list[dict[str, Any]]:
-        """Completa la lista delle tracks seguendo i link `next` successivi."""
+        """Completes the track list by following subsequent `next` links."""
         items = list(initial_items)
         next_path = first_next
 
@@ -303,7 +304,7 @@ class AppleMusicMetadataClient:
         return items
 
     async def _pagete_relationship(self, initial_path: str) -> list[dict[str, Any]]:
-        """Itera una relazione standalone (es. /artists/{id}/albums) seguendo `next`."""
+        """Iterates a standalone relationship (e.g. /artists/{id}/albums) following `next`."""
         results: list[dict[str, Any]] = []
         next_url: str | None = initial_path
 
