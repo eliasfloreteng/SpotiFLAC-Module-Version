@@ -155,6 +155,7 @@ function switchTab(name, btn) {
     loadRegistries();
     loadDirectories();
     loadTrustedKeys();
+    loadExtensionHealth();
   }
 }
 
@@ -1095,7 +1096,13 @@ function setAlbumCard(title, artist, coverUrl, quality, description, followers, 
 
   if (isArtistCard) {
     const bio = artistBiography || description || '';
-    subtitle.innerHTML = bio;
+    // textContent, not innerHTML: the bio comes from whichever metadata
+    // provider (or third-party extension) answered, and the server-side
+    // `re.sub(r"<[^>]+>", "", ...)` in spotify_metadata.py is a tag stripper,
+    // not a sanitiser — it doesn't cover every provider and doesn't survive
+    // an unterminated tag. Nothing renders differently here: .artist-bio is
+    // a -webkit-box line clamp, so markup never contributed anything anyway.
+    subtitle.textContent = bio;
     subtitle.className = bio ? 'artist-bio' : '';
     subtitle.style.display = bio ? '' : 'none';
   } else {
@@ -1185,14 +1192,34 @@ function setAlbumCard(title, artist, coverUrl, quality, description, followers, 
   }
 
   const coverEl = $('album-cover');
-  if (coverUrl) {
+  const safeCover = httpUrlOrNull(coverUrl);
+  if (safeCover) {
     const displayArtist = artist || title || 'Unknown';
-    coverEl.innerHTML = `<img src="${coverUrl}" alt="cover" onerror="this.parentElement.innerHTML='🎵'">
-    <button id="cover-download-btn" class="cover-download-btn" onclick="downloadAlbumCover(this, '${coverUrl}', '${escHtml(title || 'album')}', '${escHtml(displayArtist)}', '${escHtml(owner || '')}')" title="Download cover" style="left: 50%; top: 50%; transform: translate(-50%, -50%);">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    </button>`;
+    // Built with DOM calls rather than a template string: coverUrl is remote
+    // metadata, and the old markup dropped it unescaped into both a src=""
+    // attribute and a JS string literal inside onclick="" — one apostrophe in
+    // a cover URL was enough to break out and run as script.
+    coverEl.textContent = '';
+
+    const img = document.createElement('img');
+    img.alt = 'cover';
+    img.src = safeCover;
+    img.addEventListener('error', () => { coverEl.textContent = '🎵'; });
+    coverEl.appendChild(img);
+
+    const btn = document.createElement('button');
+    btn.id = 'cover-download-btn';
+    btn.className = 'cover-download-btn';
+    btn.title = 'Download cover';
+    btn.style.cssText = 'left: 50%; top: 50%; transform: translate(-50%, -50%);';
+    // Static markup, no interpolation.
+    btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+    btn.addEventListener('click', () => {
+      downloadAlbumCover(btn, safeCover, title || 'album', displayArtist, owner || '');
+    });
+    coverEl.appendChild(btn);
   } else {
-    coverEl.innerHTML = '🎵';
+    coverEl.textContent = '🎵';
   }
   $('album-card').classList.remove('hidden');
   $('text-search-container')?.classList.add('hidden');
@@ -1388,6 +1415,22 @@ function escHtml(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// Returns the URL only if it's an ordinary http(s) one, otherwise null.
+// Cover/avatar URLs arrive from whichever metadata provider answered, and
+// they end up in src attributes and in fetches — neither should ever be
+// handed a javascript:, data: or file: URL.
+function httpUrlOrNull(u) {
+  if (!u) return null;
+  try {
+    const parsed = new URL(String(u), window.location.href);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+      ? parsed.href
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function formatDuration(ms) {
@@ -4550,4 +4593,263 @@ if ($('config-first-artist')) {
     $('config-first-artist').addEventListener('change', function() {
         updateArtistSeparatorState(this.checked);
     });
+}
+/* ──────────────────────────────────────────────────────────────────────────
+   Following (subscriptions) — see core/subscriptions.py
+
+   A subscription is a followed artist plus the set of releases already seen.
+   The backend never downloads on its own: "Check for new" reports, and
+   "Check & download" is the explicit second step.
+   ────────────────────────────────────────────────────────────────────────── */
+
+function subFormatDate(ts) {
+  if (!ts) return 'never';
+  try {
+    return new Date(ts * 1000).toLocaleString();
+  } catch (e) {
+    return 'unknown';
+  }
+}
+
+async function loadSubscriptions() {
+  const list = $('subscription-list');
+  if (!list) return;
+  if (!window.pywebview?.api?.get_subscriptions) {
+    list.innerHTML = '<div class="s-label" style="font-size:11.5px;">Following is unavailable in this build.</div>';
+    return;
+  }
+  try {
+    renderSubscriptions(await window.pywebview.api.get_subscriptions());
+  } catch (e) {
+    list.innerHTML = '<div class="s-label" style="font-size:11.5px;color:var(--red);">Unable to load subscriptions.</div>';
+  }
+}
+
+function renderSubscriptions(subs) {
+  const list = $('subscription-list');
+  if (!list) return;
+
+  if (subs?.error) {
+    list.innerHTML = '<div class="s-label" style="font-size:11.5px;color:var(--red);">Failed to load: ' + regEscapeHtml(subs.error) + '</div>';
+    return;
+  }
+  if (!subs || !subs.length) {
+    list.innerHTML = '<div class="s-label" style="font-size:11.5px;">Not following anyone yet.</div>';
+    return;
+  }
+
+  list.innerHTML = subs.map((s) => {
+    const name = regEscapeHtml(s.name || s.url);
+    const err = s.last_error
+      ? `<div class="s-label" style="font-size:11px;color:var(--red);">Last check failed: ${regEscapeHtml(s.last_error)}</div>`
+      : '';
+    return `
+      <div class="sort-item reg-item${s.enabled ? '' : ' reg-item-disabled'}">
+        <div class="reg-item-main">
+          <span class="reg-url" title="${regEscapeHtml(s.url)}">${name}</span>
+          <div class="s-label" style="font-size:11px;">
+            ${regEscapeHtml(s.include_groups)} · ${s.seen_count} release(s) seen · checked ${regEscapeHtml(subFormatDate(s.last_checked_at))}
+          </div>
+          ${err}
+        </div>
+        <button class="act-btn secondary reg-remove-btn" type="button"
+                onclick="toggleSubscription('${regEscapeHtml(s.id)}', ${s.enabled ? 'false' : 'true'})"
+                title="${s.enabled ? 'Stop checking this artist without forgetting what has been seen' : 'Resume checking this artist'}">
+          ${s.enabled ? 'Pause' : 'Resume'}
+        </button>
+        <button class="act-btn secondary reg-remove-btn" type="button"
+                onclick="resetSubscription('${regEscapeHtml(s.id)}')"
+                title="Forget what this subscription has seen, so the whole back catalogue counts as new again">
+          Reset
+        </button>
+        <button class="act-btn secondary reg-remove-btn" type="button"
+                onclick="removeSubscription('${regEscapeHtml(s.id)}')">
+          Unfollow
+        </button>
+      </div>`;
+  }).join('');
+}
+
+async function addSubscription() {
+  const input = $('subscription-url-input');
+  const url = (input?.value || '').trim();
+  if (!url) {
+    showToast('Paste an artist link first.', 'error');
+    return;
+  }
+  try {
+    const res = await window.pywebview.api.add_subscription(
+      url, '', $('subscription-groups')?.value || 'album,single', ''
+    );
+    if (res?.ok) {
+      input.value = '';
+      showToast('Now following ' + (res.subscription?.name || 'that artist') + '.');
+      loadSubscriptions();
+    } else {
+      showToast(res?.error || 'Could not follow that link.', 'error');
+    }
+  } catch (e) {
+    showToast('Could not follow that link.', 'error');
+  }
+}
+
+async function removeSubscription(id) {
+  try {
+    await window.pywebview.api.remove_subscription(id);
+    loadSubscriptions();
+  } catch (e) {
+    showToast('Could not unfollow.', 'error');
+  }
+}
+
+async function toggleSubscription(id, enabled) {
+  try {
+    await window.pywebview.api.set_subscription_enabled(id, enabled);
+    loadSubscriptions();
+  } catch (e) {
+    showToast('Could not update that subscription.', 'error');
+  }
+}
+
+async function resetSubscription(id) {
+  if (!confirm('Forget what this subscription has seen? The next check with downloading on will treat the whole back catalogue as new.')) return;
+  try {
+    await window.pywebview.api.reset_subscription(id);
+    showToast('Reset. The next check treats every release as new.');
+    loadSubscriptions();
+  } catch (e) {
+    showToast('Could not reset that subscription.', 'error');
+  }
+}
+
+async function checkSubscriptions(download) {
+  const results = $('subscription-results');
+  if (results) {
+    results.innerHTML = '<div class="s-label" style="font-size:11.5px;">Checking…</div>';
+    $('subscription-results-section').style.display = '';
+  }
+  try {
+    await window.pywebview.api.check_subscriptions(!!download);
+  } catch (e) {
+    showToast('Could not start the check.', 'error');
+  }
+}
+
+/* Pushed by SubscriptionsMixin._check_subscriptions_thread when it finishes. */
+function subscriptionsChecked(payload) {
+  const results = $('subscription-results');
+  const section = $('subscription-results-section');
+  if (!results || !section) return;
+  section.style.display = '';
+
+  if (payload?.error) {
+    results.innerHTML = '<div class="s-label" style="font-size:11.5px;color:var(--red);">' + regEscapeHtml(payload.error) + '</div>';
+    return;
+  }
+
+  const rows = payload?.results || [];
+  if (!rows.length) {
+    results.innerHTML = '<div class="s-label" style="font-size:11.5px;">Nothing is being followed yet.</div>';
+    return;
+  }
+
+  results.innerHTML = rows.map((r) => {
+    const artist = regEscapeHtml(r.artist || r.url);
+    if (r.error) {
+      return `<div class="sort-item reg-item"><div class="reg-item-main">
+        <span class="reg-url">${artist}</span>
+        <div class="s-label" style="font-size:11px;color:var(--red);">${regEscapeHtml(r.error)}</div>
+      </div></div>`;
+    }
+    if (r.watermarked) {
+      return `<div class="sort-item reg-item"><div class="reg-item-main">
+        <span class="reg-url">${artist}</span>
+        <div class="s-label" style="font-size:11px;">First check — ${r.total_releases} release(s) recorded as seen. Only later releases will be fetched.</div>
+      </div></div>`;
+    }
+    const releases = (r.new_releases || []).map((rel) =>
+      `<div class="s-label" style="font-size:11px;">· ${regEscapeHtml(rel.title)}${rel.year ? ' (' + regEscapeHtml(rel.year) + ')' : ''} [${regEscapeHtml(rel.type)}]</div>`
+    ).join('');
+    return `<div class="sort-item reg-item"><div class="reg-item-main">
+      <span class="reg-url">${artist}</span>
+      <div class="s-label" style="font-size:11px;">${(r.new_releases || []).length} new release(s)</div>
+      ${releases}
+    </div></div>`;
+  }).join('');
+
+  loadSubscriptions();
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Extension health — see core/provider_stats.py and api_mixins/extension_health.py
+   ────────────────────────────────────────────────────────────────────────── */
+
+function healthRate(rate) {
+  return rate === null || rate === undefined ? '—' : Math.round(rate * 100) + '%';
+}
+
+function healthColour(row) {
+  if (!row.attempts) return 'var(--muted)';
+  if (row.success_rate >= 0.9) return 'var(--green, #22c55e)';
+  if (row.success_rate >= 0.5) return 'var(--yellow, #eab308)';
+  return 'var(--red)';
+}
+
+async function loadExtensionHealth() {
+  const list = $('ext-health-list');
+  if (!list) return;
+  if (!window.pywebview?.api?.get_extension_health) {
+    list.innerHTML = '<div class="s-label" style="font-size:11.5px;">Extension health is unavailable in this build.</div>';
+    return;
+  }
+  try {
+    renderExtensionHealth(await window.pywebview.api.get_extension_health());
+  } catch (e) {
+    list.innerHTML = '<div class="s-label" style="font-size:11.5px;color:var(--red);">Unable to load extension health.</div>';
+  }
+}
+
+function renderExtensionHealth(data) {
+  const list = $('ext-health-list');
+  if (!list) return;
+
+  if (data?.error) {
+    list.innerHTML = '<div class="s-label" style="font-size:11.5px;color:var(--red);">' + regEscapeHtml(data.error) + '</div>';
+    return;
+  }
+  const rows = data?.providers || [];
+  if (!rows.length) {
+    list.innerHTML = '<div class="s-label" style="font-size:11.5px;">No extensions installed, and nothing has been downloaded yet.</div>';
+    return;
+  }
+
+  list.innerHTML = rows.map((r) => {
+    const version = r.version ? ' · v' + regEscapeHtml(r.version) : '';
+    const detail = r.attempts
+      ? `${r.successes}/${r.attempts} succeeded · ~${r.avg_duration_s}s each`
+      : 'never tried';
+    const err = r.last_error
+      ? `<div class="s-label" style="font-size:11px;color:var(--red);">Last error: ${regEscapeHtml(r.last_error)}</div>`
+      : '';
+    return `
+      <div class="sort-item reg-item">
+        <div class="reg-item-main">
+          <span class="reg-url">${regEscapeHtml(r.provider)}${version}</span>
+          <div class="s-label" style="font-size:11px;">${regEscapeHtml(detail)}</div>
+          ${err}
+        </div>
+        <span style="font-weight:600;font-size:13px;color:${healthColour(r)};">${healthRate(r.success_rate)}</span>
+      </div>`;
+  }).join('');
+}
+
+async function resetExtensionHealth() {
+  if (!confirm('Clear the recorded provider statistics?')) return;
+  try {
+    await window.pywebview.api.reset_extension_health();
+    showToast('Extension statistics cleared.');
+    loadExtensionHealth();
+  } catch (e) {
+    showToast('Could not clear the statistics.', 'error');
+  }
 }

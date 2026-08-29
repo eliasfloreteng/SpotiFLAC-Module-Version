@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from typing_extensions import Self
 
@@ -106,6 +107,8 @@ class AsyncSpotiFLAC:
         track_max_retries: int = 0,
         post_download_action: str = "none",
         post_download_command: str = "",
+        resume: bool = True,
+        post_download_hooks: list[str] | None = None,
         transcode_to: str | None = None,
         transcode_bitrate: str = "320k",
         transcode_keep_original: bool = False,
@@ -146,6 +149,8 @@ class AsyncSpotiFLAC:
             track_max_retries=track_max_retries,
             post_download_action=post_download_action,
             post_download_command=post_download_command,
+            resume=resume,
+            post_download_hooks=post_download_hooks or [],
             transcode_to=transcode_to,
             transcode_bitrate=transcode_bitrate,
             transcode_keep_original=transcode_keep_original,
@@ -317,6 +322,8 @@ def SpotiFLAC(
     track_max_retries: int = 0,
     post_download_action: str = "none",
     post_download_command: str = "",
+    resume: bool = True,
+    post_download_hooks: list[str] | None = None,
     transcode_to: str | None = None,
     transcode_bitrate: str = "320k",
     transcode_keep_original: bool = False,
@@ -361,6 +368,8 @@ def SpotiFLAC(
             track_max_retries=track_max_retries,
             post_download_action=post_download_action,
             post_download_command=post_download_command,
+            resume=resume,
+            post_download_hooks=post_download_hooks or [],
             transcode_to=transcode_to,
             transcode_bitrate=transcode_bitrate,
             transcode_keep_original=transcode_keep_original,
