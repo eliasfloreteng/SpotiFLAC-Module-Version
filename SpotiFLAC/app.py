@@ -1047,19 +1047,21 @@ class SpotiFLAC_API(
             # setup — for every search typed into the box.
             from .core.tracklist import metadata_client_for
 
-            client = metadata_client_for(url)
-
             # ── Universal call ──────────────────────────────────────────────────
             # get_url() is sync on SpotifyMetadataClient but async on
             # TidalMetadataClient/AppleMusicMetadataClient — calling it directly
             # here would hand back an un-awaited coroutine for the latter two
             # (crashing on the very next line, `result[0]`). Reuse the same
             # sync/async dispatch helper the real download path already relies
-            # on instead of duplicating (and re-diverging from) that logic.
+            # on instead of duplicating (and re-diverging from) that logic —
+            # through the fallback that asks an installed metadata extension
+            # when the built-in Spotify or Apple Music client fails.
             # Returns (name, tracks) OR (name, tracks, cover) OR (name, tracks, cover, meta).
-            from .downloader import _call_metadata_get_url
+            from .core.metadata_fallback import get_url_with_fallback
 
-            result = await _call_metadata_get_url(client, stripped)
+            result = await get_url_with_fallback(
+                stripped, lambda: metadata_client_for(url)
+            )
             collection_name = result[0]
             tracks = result[1]
             collection_cover = result[2] if len(result) > 2 else ""
@@ -1561,6 +1563,12 @@ class SpotiFLAC_API(
             apple_lyrics_word_by_word = config.get("apple_lyrics_word_by_word", True)
             save_lrc = config.get("save_lrc", False)
             lrc_library_dir = config.get("lrc_library_dir") or None
+            save_canvas = config.get("save_canvas", False)
+            canvas_library_dir = config.get("canvas_library_dir") or None
+            canvas_providers = config.get("canvas_providers") or [
+                "spotify",
+                "paxsenix",
+            ]
             enrich_providers = config.get("enrich_providers") or [
                 "deezer",
                 "apple",
@@ -1756,6 +1764,9 @@ class SpotiFLAC_API(
                 apple_lyrics_word_by_word=apple_lyrics_word_by_word,
                 save_lrc=save_lrc,
                 lrc_library_dir=lrc_library_dir,
+                save_canvas=save_canvas,
+                canvas_library_dir=canvas_library_dir,
+                canvas_providers=canvas_providers,
                 enrich_metadata=enrich_metadata,
                 enrich_providers=enrich_providers,
                 qobuz_local_api_url=qobuz_local_api_url,
