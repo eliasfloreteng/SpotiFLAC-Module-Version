@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import logging
 import queue
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -35,6 +36,7 @@ from SpotiFLAC.core.base import BaseProvider
 from SpotiFLAC.core.errors import ErrorKind, SpotiflacError
 from SpotiFLAC.core.models import DownloadResult, TrackMetadata
 from SpotiFLAC.core.output_lock import output_path_lock
+from SpotiFLAC.core.link_resolver import LinkResolver
 from SpotiFLAC.core.text_match import track_identity_mismatch
 from SpotiFLAC.core.signed_session_mobile import SignedSessionClient
 
@@ -113,6 +115,11 @@ class JSExtensionProvider(BaseProvider):
     Instead of a single blocking Node.js process, creates up to `max_runtimes`
     simultaneous processes to download tracks at the same speed as native providers.
     """
+
+    # This provider embeds service-response release fields (label, UPC,
+    # credits, MusicBrainz matches) before returning. The host fallback tagger
+    # must not overwrite those fields.
+    handles_metadata_injection = True
 
     def __init__(
         self,
@@ -344,6 +351,113 @@ class JSExtensionProvider(BaseProvider):
             options or {},
         ) or {"available": False}
 
+    def _provider_key(self) -> str:
+        """The catalog name understood by the cross-platform resolver."""
+        return re.sub(
+            r"-(?:web|py)$",
+            "",
+            self._ext.name.removeprefix("ext:").lower(),
+        )
+
+    @staticmethod
+    def _spotify_track_url(metadata: TrackMetadata) -> str:
+        """Return a Spotify URL only when the metadata really identifies Spotify.
+
+        Provider-native ids such as ``apple_123`` or ``deezer_456`` must not
+        be interpolated into a Spotify URL: the resolver would then return a
+        plausible but unrelated cross-catalogue match.
+        """
+        external_url = str(metadata.external_url or "").strip()
+        match = re.search(
+            r"https?://open\.spotify\.com/track/([A-Za-z0-9]{22})(?:[/?#]|$)",
+            external_url,
+            re.IGNORECASE,
+        )
+        if match:
+            return f"https://open.spotify.com/track/{match.group(1)}"
+
+        raw_id = str(metadata.id or "").strip()
+        if raw_id.lower().startswith("spotify_"):
+            raw_id = raw_id[8:]
+        if re.fullmatch(r"[A-Za-z0-9]{22}", raw_id):
+            return f"https://open.spotify.com/track/{raw_id}"
+        return ""
+
+    @staticmethod
+    def _provider_track_id(provider: str, url: str) -> str:
+        """Extract a native track id from a resolver URL."""
+        value = str(url or "").strip()
+        if not value:
+            return ""
+        if provider in {"tidal", "qobuz", "deezer"}:
+            match = re.search(r"/track/(\d+)(?:[/?#]|$)", value, re.IGNORECASE)
+            return match.group(1) if match else ""
+        if provider == "amazon":
+            match = re.search(
+                r"/tracks?/(B[0-9A-Z]{9})(?:[/?#]|$)", value, re.IGNORECASE
+            )
+            if match:
+                return match.group(1).upper()
+            match = re.search(
+                r"[?&]trackAsin=([A-Z0-9]{10})(?:[&#]|$)", value, re.IGNORECASE
+            )
+            return match.group(1).upper() if match else ""
+        return ""
+
+    async def _provider_match_options(self, metadata: TrackMetadata) -> dict[str, Any]:
+        """Build provider-specific match hints without changing extensions.
+
+        The resolver is best effort.  Every JavaScript provider already has
+        its own ISRC/title/artist fallback, so a resolver outage must never
+        make a previously downloadable track unavailable.
+        """
+        options: dict[str, Any] = {
+            "duration_ms": metadata.duration_ms,
+            "spotify_id": metadata.id,
+            "track": {
+                "name": metadata.title,
+                "artists": metadata.artists,
+                "album_name": metadata.album,
+                "duration_ms": metadata.duration_ms,
+                "isrc": metadata.isrc,
+            },
+        }
+        spotify_url = self._spotify_track_url(metadata)
+        if not spotify_url:
+            return options
+        options["spotify_url"] = spotify_url
+
+        provider = self._provider_key()
+        if provider not in {"tidal", "qobuz", "deezer", "amazon"}:
+            return options
+        try:
+            target_url = await LinkResolver().resolve_provider_url_async(
+                spotify_url,
+                provider,
+            )
+        except Exception as exc:
+            logger.debug(
+                "[%s] cross-catalogue link resolution failed: %s",
+                self.name,
+                exc,
+            )
+            return options
+        if not target_url:
+            return options
+
+        options[f"{provider}_url"] = target_url
+        native_id = self._provider_track_id(provider, target_url)
+        if native_id:
+            if provider == "amazon":
+                # The Amazon extension already treats spotify_id as a native
+                # ASIN when it has the ASIN shape.  Keep this compatibility
+                # path so no JavaScript change is needed.
+                options["amazon_id"] = native_id
+                options["spotify_id"] = native_id
+            else:
+                options[f"{provider}_id"] = native_id
+        return options
+
     def handle_url(self, url: str) -> dict:
         return self._call("handleUrl", url) or {}
 
@@ -444,15 +558,18 @@ class JSExtensionProvider(BaseProvider):
         is_album: bool = False,
         transcode_to: str | None = None,
     ) -> DownloadResult:
+        """Match and download a track through the JavaScript extension.
+
+        Forward provider hints and prepared context, serialize output writes,
+        and return a success, skip, or failure result after post-processing.
+        """
+        availability_options = await self._provider_match_options(metadata)
         avail = await asyncio.to_thread(
             self.check_availability,
             isrc=metadata.isrc,
             track_name=metadata.title,
             artist_name=metadata.artists,
-            options={
-                "duration_ms": metadata.duration_ms,
-                "spotify_id": metadata.id,
-            },
+            options=availability_options,
         )
 
         if not avail.get("available"):
@@ -465,6 +582,17 @@ class JSExtensionProvider(BaseProvider):
                 self.name,
                 "checkAvailability returned no track_id",
             )
+
+        # The JS contract accepts the same provider-specific hints in
+        # download() as in checkAvailability().  Forward both the resolver
+        # hints and the verified context returned by the extension.  The old
+        # bridge discarded them after availability, forcing extensions to
+        # look up the track a second time and, for some catalogues, losing a
+        # match that had already been found.
+        download_options = dict(availability_options)
+        prepared_context = avail.get("prepared_context")
+        if isinstance(prepared_context, dict):
+            download_options["preparedContext"] = prepared_context
 
         ext_hint = _quality_to_ext(quality)
         output_path = self._build_output_path(
@@ -607,6 +735,7 @@ class JSExtensionProvider(BaseProvider):
                     quality,
                     str(output_path),
                     None,
+                    download_options,
                     progress_cb=_progress_adapter,
                 )
             finally:

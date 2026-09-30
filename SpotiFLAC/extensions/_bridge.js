@@ -288,6 +288,101 @@ if (!isMainThread) {
         return { success: false, error: e.message };
       }
     },
+
+    // Deezer's encrypted FLAC stream stores one Blowfish/CBC block out of
+    // every `transformEvery` segments.  The mobile runtime exposes this as
+    // file.transformPatternedBlocks; keep the implementation in the host
+    // bridge so the installed extension remains untouched.
+    transformPatternedBlocks: (inputPath, outputPath, opts, onProgress) => {
+      let inputFd = null;
+      let outputFd = null;
+      try {
+        const fs = require('fs');
+        const crypto = require('crypto');
+        opts = opts || {};
+        const operation = String(opts.operation || 'decrypt').toLowerCase();
+        if (operation !== 'decrypt' && operation !== 'encrypt') {
+          throw new Error('unsupported patterned transform operation: ' + operation);
+        }
+
+        const segmentSize = Math.max(8, Number(opts.segmentSize || 2048));
+        const transformEvery = Math.max(1, Number(opts.transformEvery || 1));
+        const transformOffset = Math.max(0, Number(opts.transformOffset || 0));
+        const requestedBufferSize = Math.max(
+          segmentSize,
+          Number(opts.bufferSize || segmentSize),
+        );
+        const maxBufferSize = Math.max(segmentSize, 1024 * 1024);
+        // Keep reads aligned to a segment boundary.  Otherwise a patterned
+        // segment split across two reads would be mistaken for two partial
+        // segments and skipped when transformPartial is false.
+        const bufferSize = Math.max(
+          segmentSize,
+          Math.floor(Math.min(requestedBufferSize, maxBufferSize) / segmentSize) * segmentSize,
+        );
+        const transformPartial = opts.transformPartial === true;
+        const inputStats = fs.statSync(inputPath);
+        const totalSize = inputStats.size;
+        const key = Buffer.from(String(opts.key || ''), opts.keyEncoding || 'hex');
+        const iv = Buffer.from(String(opts.iv || ''), opts.ivEncoding || 'hex');
+        if (!key.length || iv.length !== 8) {
+          throw new Error('invalid Blowfish key or IV');
+        }
+
+        inputFd = fs.openSync(inputPath, 'r');
+        outputFd = fs.openSync(outputPath, 'w');
+        const buffer = Buffer.alloc(bufferSize);
+        let position = 0;
+
+        while (position < totalSize) {
+          const length = Math.min(buffer.length, totalSize - position);
+          const bytesRead = fs.readSync(inputFd, buffer, 0, length, position);
+          if (!bytesRead) break;
+
+          let offset = 0;
+          while (offset < bytesRead) {
+            const absolutePosition = position + offset;
+            const segmentIndex = Math.floor(absolutePosition / segmentSize);
+            const segmentOffset = absolutePosition % segmentSize;
+            const chunkLength = Math.min(
+              segmentSize - segmentOffset,
+              bytesRead - offset,
+            );
+            const isPatterned =
+              segmentIndex >= transformOffset &&
+              (segmentIndex - transformOffset) % transformEvery === 0;
+            const canTransform = chunkLength === segmentSize || transformPartial;
+            let chunk = buffer.subarray(offset, offset + chunkLength);
+
+            if (isPatterned && canTransform) {
+              if (chunk.length % 8 !== 0) {
+                throw new Error('Blowfish block is not a multiple of 8 bytes');
+              }
+              const cipher = operation === 'decrypt'
+                ? crypto.createDecipheriv('bf-cbc', key, iv)
+                : crypto.createCipheriv('bf-cbc', key, iv);
+              cipher.setAutoPadding(false);
+              chunk = Buffer.concat([cipher.update(chunk), cipher.final()]);
+            }
+
+            fs.writeSync(outputFd, chunk, 0, chunk.length, absolutePosition);
+            offset += chunkLength;
+          }
+
+          position += bytesRead;
+          if (typeof onProgress === 'function' && totalSize > 0) {
+            onProgress(position, totalSize);
+          }
+        }
+
+        return { success: true, path: outputPath };
+      } catch (e) {
+        return { success: false, error: e.message };
+      } finally {
+        try { if (inputFd !== null) require('fs').closeSync(inputFd); } catch (_) {}
+        try { if (outputFd !== null) require('fs').closeSync(outputFd); } catch (_) {}
+      }
+    },
     
     delete: (filePath) => {
       try {

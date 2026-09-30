@@ -807,6 +807,58 @@ async def _apply_post_processing_async(
     return result
 
 
+async def _inject_provider_metadata_async(
+    provider: BaseProvider,
+    result: DownloadResult,
+    metadata: TrackMetadata,
+    opts: DownloadOptions,
+    is_album: bool,
+) -> None:
+    """Ensure provider-produced files carry the requested metadata.
+
+    JavaScript extensions historically do this themselves because they also
+    expose release-specific fields from their response. Python extensions
+    implement the smaller ``BaseProvider`` contract and normally return audio
+    only, so the host must tag their result before post-processing/transcoding.
+    """
+    if (
+        getattr(provider, "handles_metadata_injection", False)
+        or result.skipped
+        or not result.file_path
+    ):
+        return
+
+    path = Path(result.file_path)
+    if not path.is_file():
+        return
+
+    try:
+        from ..core.tagger import EmbedOptions, embed_metadata_async
+
+        await embed_metadata_async(
+            path,
+            metadata,
+            EmbedOptions(
+                cover_url=metadata.cover_url or "",
+                first_artist_only=opts.first_artist_only,
+                artist_separator=opts.artist_separator,
+                embed_lyrics=opts.embed_lyrics,
+                lyrics_providers=opts.lyrics_providers,
+                apple_lyrics_word_by_word=opts.apple_lyrics_word_by_word,
+                enrich=opts.enrich_metadata,
+                enrich_providers=opts.enrich_providers,
+                enrich_qobuz_token=opts.qobuz_token or "",
+                is_album=is_album,
+            ),
+        )
+    except Exception as exc:
+        logger.warning(
+            "[%s] Host metadata injection failed (non-fatal): %s",
+            provider.name,
+            exc,
+        )
+
+
 def _restore_identity(metadata: TrackMetadata, requested: TrackMetadata) -> None:
     """Undo any change a provider made to what names the recording.
 
@@ -1106,6 +1158,15 @@ async def _download_one_pass_async(
                     requested,
                     result,
                     provider.name,
+                )
+
+            if result.success and not result.skipped:
+                await _inject_provider_metadata_async(
+                    provider,
+                    result,
+                    metadata,
+                    opts,
+                    is_album,
                 )
 
             if result.success and not result.skipped:

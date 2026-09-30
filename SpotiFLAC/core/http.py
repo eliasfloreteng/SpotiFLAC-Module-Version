@@ -73,12 +73,9 @@ _redaction_filter: _RedactUrlFilter | None = None
 def install_log_redaction(force: bool = False) -> bool:
     """Attaches the URL-redacting filter to httpx's logger. Idempotent.
 
-    Called once at import, which is a real liberty for a library to take with
-    someone else's logging config — so it is at least named, documented,
-    reversible (`remove_log_redaction()`), and skippable by setting
-    $SPOTIFLAC_NO_LOG_REDACTION. It stays on by default anyway because the
-    alternative default is "leak provider tokens into the user's logs", and
-    a security control that has to be switched on is not one most people get.
+    Installed at import time so provider tokens and signed query strings do
+    not leak into application logs. Callers that own their logging policy can
+    explicitly remove it.
 
     `force=True` ignores the environment variable. Returns whether the filter
     is attached afterwards.
@@ -324,7 +321,6 @@ class AsyncRateLimiter:
 
 # Rate limiters globali async
 async_zarz_rate_limiter = AsyncRateLimiter(5, 10.0)
-async_songlink_rate_limiter = AsyncRateLimiter(9, 60.0)
 
 
 @dataclass

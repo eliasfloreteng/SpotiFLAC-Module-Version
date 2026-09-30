@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from .http import AsyncHttpClient, async_songlink_rate_limiter
+from .http import AsyncHttpClient, async_zarz_rate_limiter
 from .response_cache import get as get_cached_response
 from .response_cache import put as put_cached_response
 from .url_utils import url_host_matches, url_path_contains
@@ -21,16 +21,11 @@ logger = logging.getLogger(__name__)
 class LinkResolver:
     """Resolves cross-platform links using a Multi-Provider approach (Async-only)."""
 
-    SONGLINK_API_URL = "https://api.song.link/v1-alpha.1/links"
-
-    #: Songlink retired free public access to v1-alpha.1 — every request now
-    #: answers 401 PUBLIC_API_ACCESS_DEPRECATED — so it is no longer a
-    #: resolver, only a fallback kept in case access returns. This is what
-    #: actually answers, and it returns the ISRC alongside the links.
+    #: The project's cross-platform resolver. It returns the ISRC alongside
+    #: the links and accepts both source URLs and platform/id payloads.
     RESOLVE_API_URL = "https://api.zarz.moe/v1/resolve"
 
-    #: The resolve API's platform names, mapped onto the ones the rest of
-    #: this class uses (which are Songlink's).
+    #: The resolver's platform names, mapped onto the names used by the app.
     _RESOLVE_PLATFORM_KEYS = {
         "Spotify": "spotify",
         "Deezer": "deezer",
@@ -48,19 +43,11 @@ class LinkResolver:
     BASE_DELAY_S = 1.0
     MAX_DELAY_S = 10.0
 
-    _SONGLINK_PLATFORMS = (
-        "deezer",
-        "amazonMusic",
-        "tidal",
-        "appleMusic",
-        "spotify",
-        "soundcloud",
-    )
-
     def __init__(self, http_client: AsyncHttpClient | None = None) -> None:
+        """Use the supplied HTTP client or create one, and initialize the Deezer cache."""
         self.http = http_client or AsyncHttpClient(
-            "songlink",
-            rate_limiter=async_songlink_rate_limiter,
+            "link-resolver",
+            rate_limiter=async_zarz_rate_limiter,
         )
         self._deezer_async_cache: dict[str, str] = {}
 
@@ -72,7 +59,7 @@ class LinkResolver:
             "Accept-Language": "en-US,en;q=0.9",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
-            "Referer": "https://song.link/",
+            "Referer": "https://api.zarz.moe/",
         }
         return await self._request_with_retry(
             lambda: self.http.get_json_async(url, params=params, headers=headers),
@@ -98,7 +85,7 @@ class LinkResolver:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Upgrade-Insecure-Requests": "1",
-            "Referer": "https://song.link/",
+            "Referer": "https://songstats.com/",
         }
         # Prefer async http client method if available (tests mock get_async).
         if hasattr(self.http, "get_async"):
@@ -185,7 +172,7 @@ class LinkResolver:
         return raw_url.strip()
 
     def _process_resolve_response(self, data: dict) -> dict[str, str]:
-        """The resolve API's answer, in the same shape as Songlink's.
+        """Normalize the resolver response.
 
         Its values are sometimes a bare URL string and sometimes an object
         carrying one, so both are accepted rather than assuming either.
@@ -210,28 +197,13 @@ class LinkResolver:
         return links
 
     async def _resolve_links_async(self, payload: dict) -> dict[str, str]:
-        """Asks the resolve API. Returns {} on any failure, so the caller
-        falls through to Songlink exactly as it did before.
-        """
+        """Ask the cross-platform resolver, returning an empty result on error."""
         try:
             resp = await self.http.post(self.RESOLVE_API_URL, json=payload, timeout=20)
             return self._process_resolve_response(resp.json())
         except Exception as exc:
             logger.debug("[link_resolver] resolve API failed for %s: %s", payload, exc)
             return {}
-
-    def _process_songlink_response(self, data: dict) -> dict[str, str]:
-        links: dict[str, str] = {}
-        entities = data.get("linksByPlatform", {})
-
-        for platform in self._SONGLINK_PLATFORMS:
-            entry = entities.get(platform)
-            if isinstance(entry, dict):
-                url = entry.get("url")
-                if url:
-                    links[platform] = self._normalize_platform_url(platform, url)
-
-        return links
 
     def _normalize_platform_url(self, platform: str, url: str) -> str:
         url = url.strip()
@@ -355,70 +327,38 @@ class LinkResolver:
             logger.debug(f"[link_resolver] Deezer ISRC lookup async failed: {e}")
         return ""
 
-    async def _get_songlink_links_async(self, params: dict[str, str]) -> dict[str, str]:
-        try:
-            data = await self._safe_get_json(self.SONGLINK_API_URL, params=params)
-            return self._process_songlink_response(data)
-        except Exception as e:
-            logger.debug(f"[link_resolver] Songlink lookup async failed: {e}")
-        return {}
+    async def _get_resolve_links_by_url_async(self, url: str) -> dict[str, str]:
+        """Resolve a source URL into normalized platform links."""
+        return await self._resolve_links_async({"url": url})
 
-    async def _get_songlink_links_by_url_async(self, url: str) -> dict[str, str]:
-        # The resolve API first, Songlink second. Not a preference: Songlink
-        # answers 401 PUBLIC_API_ACCESS_DEPRECATED to everything since Odesli
-        # retired free access to v1-alpha.1, so it resolves nothing at all
-        # any more. It is kept behind the new path rather than deleted
-        # because the day access returns it costs one request to find out.
-        links = await self._resolve_links_async({"url": url})
-        if links:
-            return links
-        return await self._get_songlink_links_async({"url": url, "userCountry": "US"})
+    async def resolve_provider_url_async(
+        self,
+        source_url: str,
+        provider: str,
+    ) -> str:
+        """Return one provider link for a source track URL.
 
-    async def _get_songlink_links_by_id_async(
+        This is the public Python-only entry point used by the extension
+        bridge.  Extensions still receive their native identifiers; they do
+        not need to know about the cross-catalogue resolver or be modified.
+        """
+        normalized_provider = {
+            "amazon": "amazonMusic",
+            "amazon-music": "amazonMusic",
+            "amazonmusic": "amazonMusic",
+        }.get(provider.strip().lower(), provider.strip())
+        links = await self._get_resolve_links_by_url_async(source_url)
+        return links.get(normalized_provider, "")
+
+    async def _get_resolve_links_by_id_async(
         self,
         raw_id: str,
         platform: str,
     ) -> dict[str, str]:
-        links = await self._resolve_links_async(
+        """Resolve a platform track identifier into normalized platform links."""
+        return await self._resolve_links_async(
             {"platform": platform, "type": "track", "id": raw_id},
         )
-        if links:
-            return links
-        return await self._get_songlink_links_async(
-            {"id": raw_id, "platform": platform, "userCountry": "US", "type": "song"},
-        )
-
-    async def _get_songlink_html_links_async(self, raw_id: str) -> dict[str, str]:
-        links: dict[str, str] = {}
-        try:
-            url = f"https://song.link/s/{urllib.parse.quote(raw_id, safe='')}?userCountry=US"
-            resp = await self._safe_get_html(url)
-            html = resp.text
-
-            deezer_match = re.search(r"https?://www\.deezer\.com/track/[0-9]+", html)
-            if deezer_match:
-                links["deezer"] = self._normalize_deezer_url(deezer_match.group(0))
-
-            amazon_match = re.search(r"trackAsin=([A-Z0-9]{10})", html)
-            if amazon_match:
-                links["amazonMusic"] = self._normalize_amazon_url(
-                    f"https://music.amazon.com/tracks/{amazon_match.group(1)}?musicTerritory=US",
-                )
-            tidal_match = re.search(r"https?://listen\.tidal\.com/track/[0-9]+", html)
-            if tidal_match:
-                links["tidal"] = tidal_match.group(0)
-        except Exception as e:
-            logger.debug(f"[link_resolver] Song.link HTML fallback async failed: {e}")
-        return links
-
-    async def _get_songlink_isrc_links_async(self, isrc: str) -> dict[str, str]:
-        try:
-            params = {"isrc": isrc.upper().strip(), "userCountry": "US"}
-            data = await self._safe_get_json(self.SONGLINK_API_URL, params=params)
-            return self._process_songlink_response(data)
-        except Exception as e:
-            logger.debug(f"[link_resolver] Songlink ISRC lookup async failed: {e}")
-        return {}
 
     async def spotify_url_for_isrc_async(self, isrc: str) -> str:
         """The Spotify link for a recording, given only its ISRC.
@@ -432,13 +372,6 @@ class LinkResolver:
         if not normalized:
             return ""
 
-        # The resolve API first, for the same reason _get_songlink_links_by_
-        # url_async() prefers it: Songlink answers 401
-        # PUBLIC_API_ACCESS_DEPRECATED to everything since Odesli retired free
-        # access, so the Songlink-only version of this function returned ""
-        # for every ISRC ever passed to it — a CSV row with an ISRC and no
-        # usable title resolved to nothing at all.
-        #
         # The resolve endpoint takes a URL or a platform/type/id triple, not
         # an ISRC, so Deezer's ISRC index supplies the URL. That is the same
         # bridge resolve_all_async() already uses to go from an ISRC to the
@@ -449,9 +382,7 @@ class LinkResolver:
             spotify = resolved.get("spotify", "")
             if spotify:
                 return spotify
-
-        links = await self._get_songlink_isrc_links_async(normalized)
-        return links.get("spotify", "")
+        return ""
 
     async def _get_songstats_links_async(self, identifier: str) -> dict[str, str]:
         try:
@@ -469,6 +400,11 @@ class LinkResolver:
         track_id: str,
         isrc: str | None = None,
     ) -> dict[str, str]:
+        """Return cached or resolved platform links and any discovered ISRC.
+
+        Combine source-ID links with Deezer and Songstats ISRC lookups,
+        using fallback links to fill missing platforms.
+        """
         cache_key = f"{track_id}|{isrc or ''}"
         cached = get_cached_response("link-resolver", cache_key, 7 * 24 * 60 * 60)
         if isinstance(cached, dict):
@@ -497,20 +433,25 @@ class LinkResolver:
                 )
 
         try:
-            songlink_links = {}
-            if links.get("deezer"):
-                songlink_links = await self._get_songlink_links_by_url_async(
-                    links["deezer"],
-                )
-            else:
-                songlink_links = await self._get_songlink_links_by_id_async(
-                    raw_id,
-                    platform,
-                )
+            # Always resolve the identifier the caller supplied first. When
+            # an ISRC is also present, the Deezer lookup below is only a
+            # completion path: resolving the Deezer reissue first can lose
+            # platforms (Apple/Qobuz/YouTube) or select a different edition.
+            source_links = await self._get_resolve_links_by_id_async(
+                raw_id,
+                platform,
+            )
+            self._merge_links(links, source_links)
 
-            self._merge_links(links, songlink_links)
+            if links.get("deezer") and any(
+                not links.get(key) for key in ("tidal", "amazonMusic", "appleMusic")
+            ):
+                self._merge_links(
+                    links,
+                    await self._get_resolve_links_by_url_async(links["deezer"]),
+                )
         except Exception as e:
-            logger.debug(f"[link_resolver] Songlink async failed: {e}")
+            logger.debug(f"[link_resolver] source-link lookup failed: {e}")
 
         if not isrc and links.get("deezer"):
             isrc = await self._get_isrc_from_deezer_async(links["deezer"])
@@ -531,19 +472,7 @@ class LinkResolver:
                     links["deezer"] = deezer_url
 
             if not links.get("tidal") or not links.get("amazonMusic"):
-                self._merge_links(
-                    links,
-                    await self._get_songlink_isrc_links_async(isrc),
-                )
-
-            if not links.get("tidal") or not links.get("amazonMusic"):
                 self._merge_links(links, await self._get_songstats_links_async(isrc))
-
-        if (not links.get("tidal") or not links.get("amazonMusic")) and raw_id:
-            html_links = await self._get_songlink_html_links_async(raw_id)
-            for plat, url in html_links.items():
-                if plat not in links and url:
-                    links[plat] = url
 
         if isrc:
             links["isrc"] = isrc

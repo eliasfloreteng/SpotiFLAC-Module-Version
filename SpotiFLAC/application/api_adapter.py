@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 
 from SpotiFLAC.application.job_service import JobService
 from SpotiFLAC.application.event_bus import EventBus
@@ -27,8 +28,15 @@ class ApiAdapter:
         self._tasks: set[asyncio.Task] = set()
 
     async def submit_download(self, payload: dict) -> dict:
+        """Enqueue sources with the requested options and return job details."""
         config = SpotiFLACConfig()
         config.download.quality = payload.get("quality", "LOSSLESS")
+        services = payload.get("services")
+        if services:
+            config.download.services = list(services)
+        output_dir = payload.get("output_dir")
+        if output_dir:
+            config.output.directory = Path(str(output_dir)).expanduser()
 
         sources = payload.get("sources") or []
         if not sources and payload.get("url"):
@@ -46,7 +54,14 @@ class ApiAdapter:
         return {
             "id": job["id"],
             "status": job["status"],
-            "provider_order": ["tidal", "qobuz", "deezer", "apple", "amazon"],
+            "provider_order": [
+                "tidal",
+                "qobuz",
+                "deezer",
+                "apple",
+                "amazon",
+                "youtube",
+            ],
             "items": len(request.sources),
             "items_detail": self._job_service.items(job["id"]),
         }

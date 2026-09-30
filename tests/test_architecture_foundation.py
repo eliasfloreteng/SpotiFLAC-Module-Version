@@ -15,6 +15,7 @@ from SpotiFLAC import (
     DownloadFailure,
     DownloadReport,
     DownloadRequest,
+    DownloadSkip,
     SpotiFLACConfig,
 )
 from SpotiFLAC.application import (
@@ -32,6 +33,7 @@ from SpotiFLAC.application import (
     QueueService,
     PostProcessingService,
 )
+from SpotiFLAC.application import download_engine
 from SpotiFLAC.application.pipeline import (
     DownloadContext,
     DownloadPipeline,
@@ -883,6 +885,38 @@ def test_skipped_provider_results_preserve_source_and_report_skip():
     assert report.total == 1
 
 
+def test_failed_provider_results_are_not_reported_as_success_and_fall_back():
+    """Verify a failed result triggers fallback and only the successful result is kept."""
+    attempts = []
+
+    async def execute(provider, source):
+        """Record provider attempts, failing the first and succeeding on fallback."""
+        attempts.append(provider)
+        if provider == "first":
+            return DownloadResult.fail(provider, "first provider unavailable")
+        return DownloadResult.ok(provider, "/music/fallback.flac", source=source)
+
+    request = DownloadRequest(
+        sources=["spotify:track:failed-result"], config=SpotiFLACConfig()
+    )
+    report = asyncio.run(
+        DownloadService(
+            provider_resolver=ProviderResolver(
+                [
+                    ProviderProfile("first", priority=2),
+                    ProviderProfile("second", priority=1),
+                ]
+            ),
+            provider_executor=execute,
+        ).download(request)
+    )
+
+    assert attempts == ["first", "second"]
+    assert report.failed == []
+    assert report.succeeded[0].success is True
+    assert report.succeeded[0].provider == "second"
+
+
 def test_application_metadata_is_forwarded_without_legacy_reresolution():
     metadata_calls = 0
     forwarded = []
@@ -1102,6 +1136,7 @@ def test_metadata_service_resolves_sources_to_track_metadata():
 
 
 def test_provider_resolver_prefers_supported_quality_and_fallback_order():
+    """Verify default candidates favor Tidal and include supported fallbacks."""
     resolver = ProviderResolver()
     request = DownloadRequest(
         sources=["spotify:track:abc123"],
@@ -1112,7 +1147,7 @@ def test_provider_resolver_prefers_supported_quality_and_fallback_order():
 
     assert candidates[0] == "tidal"
     assert "qobuz" in candidates
-    assert candidates[-1] in {"deezer", "amazon", "apple"}
+    assert candidates[-1] in {"deezer", "amazon", "apple", "youtube"}
 
 
 def test_provider_resolver_preserves_configured_legacy_services():
@@ -1124,6 +1159,7 @@ def test_provider_resolver_preserves_configured_legacy_services():
 
 
 def test_download_pipeline_prepares_source_and_provider_context():
+    """Verify preparation records the selected provider and ordered candidates."""
     request = DownloadRequest(
         sources=["spotify:track:abc123"], config=SpotiFLACConfig()
     )
@@ -1143,6 +1179,7 @@ def test_download_pipeline_prepares_source_and_provider_context():
         "deezer",
         "apple",
         "amazon",
+        "youtube",
     ]
 
 
@@ -1254,6 +1291,43 @@ def test_tag_step_delegates_to_the_tagging_boundary():
     asyncio.run(TagStep(fake_tagger).execute(context))
 
     assert calls == [("/tmp/song.flac", "Song")]
+
+
+def test_host_injects_metadata_for_audio_only_provider(tmp_path, monkeypatch):
+    """Verify the host tags audio when the provider does not inject metadata."""
+    calls = []
+
+    async def fake_embed(path, metadata, options):
+        """Record the path, title, and tagging options passed to the host tagger."""
+        calls.append((path, metadata.title, options.embed_lyrics, options.enrich))
+
+    monkeypatch.setattr("SpotiFLAC.core.tagger.embed_metadata_async", fake_embed)
+    path = tmp_path / "song.flac"
+    path.write_bytes(b"audio")
+    track = TrackMetadata(
+        id="track-1",
+        title="Song",
+        artists="Artist",
+        album="Album",
+        album_artist="Artist",
+    )
+    provider = SimpleNamespace(
+        name="python-provider",
+        handles_metadata_injection=False,
+    )
+    result = DownloadResult.ok(provider.name, str(path))
+
+    asyncio.run(
+        download_engine._inject_provider_metadata_async(
+            provider,
+            result,
+            track,
+            DownloadOptions(output_dir=str(tmp_path)),
+            False,
+        )
+    )
+
+    assert calls == [(path, "Song", True, True)]
 
 
 def test_lyrics_and_canvas_steps_delegate_post_processing():
@@ -1858,6 +1932,32 @@ def test_job_service_updates_item_results_by_source(tmp_path):
     assert items[1]["status"] == "FAILED"
     assert items[1]["error"] == "not_found"
     assert items[1]["attempts"] == 2
+
+
+def test_job_service_marks_skipped_items_terminal(tmp_path):
+    """Verify a skipped download produces a terminal item in a completed job."""
+
+    class FakeDownloadService:
+        async def download(self, request):
+            """Return a report marking the first source as already downloaded."""
+            return DownloadReport(
+                succeeded=[],
+                failed=[],
+                skipped=[
+                    DownloadSkip(source=request.sources[0], reason="already_exists")
+                ],
+            )
+
+    repo = JobRepository(tmp_path / "item-skipped.db")
+    service = JobService(repo=repo, download_service=FakeDownloadService())
+    request = DownloadRequest(
+        sources=["spotify:track:skipped"], config=SpotiFLACConfig()
+    )
+    job = asyncio.run(service.enqueue(request))
+    asyncio.run(service.execute(job["id"]))
+
+    assert service.get(job["id"])["status"] == "DONE"
+    assert service.items(job["id"])[0]["status"] == "SKIPPED"
 
 
 def test_job_service_marks_report_failures_as_failed(tmp_path):

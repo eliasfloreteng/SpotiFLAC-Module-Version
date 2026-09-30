@@ -26,6 +26,11 @@ class BaseProvider(ABC):
 
     name: str = "base"
     _is_async: bool = True
+    # Providers normally return audio only; the application owns metadata
+    # injection so Python extensions cannot accidentally produce untagged
+    # files. A provider may opt out when it embeds tags itself and needs to
+    # preserve provider-specific fields unavailable to the host.
+    handles_metadata_injection: bool = False
 
     def __init__(
         self,

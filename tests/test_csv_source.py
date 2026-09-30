@@ -259,13 +259,10 @@ def test_a_text_row_is_matched_and_a_hopeless_one_is_reported() -> None:
 
 
 def test_an_isrc_row_resolves_through_spotifys_own_catalogue() -> None:
-    """A row identified only by its ISRC must not depend on Songlink.
+    """A row identified only by its ISRC uses Spotify's exact search operator.
 
-    Odesli retired free public access to the v1-alpha.1 API — every request
-    now answers 401 PUBLIC_API_ACCESS_DEPRECATED — and the failure was
-    silent: the row came back "ISRC not found", which is precisely the row
-    that could otherwise have been matched with certainty rather than
-    guessed at. Spotify's own `isrc:` search operator answers it instead.
+    The cross-platform resolver is not needed for this path: Spotify's own
+    `isrc:` search answers the row without guessing from title or artist.
     """
     track = _track(title="Window Shopper", artists="50 Cent")
     catalogue = _FakeCatalogue([track])

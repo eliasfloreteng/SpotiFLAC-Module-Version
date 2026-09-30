@@ -112,6 +112,7 @@ class JobService:
         return report
 
     async def _persist_item_results(self, job_id: str, report: Any) -> None:
+        """Persist reported item outcomes and publish update and terminal events."""
         outcomes: dict[str, dict[str, Any]] = {}
         for result in getattr(report, "succeeded", []):
             if result.source:
@@ -128,6 +129,13 @@ class JobService:
                     "error": failure.reason,
                     "attempts": failure.attempts,
                 }
+        for skip in getattr(report, "skipped", []):
+            if skip.source:
+                outcomes[skip.source] = {
+                    "status": "SKIPPED",
+                    "provider": skip.provider,
+                    "result": skip.file_path or getattr(skip.track, "id", None),
+                }
         for item in self._repo.list_items(job_id):
             outcome = outcomes.get(item["source"])
             if outcome:
@@ -140,6 +148,7 @@ class JobService:
                     "DONE": "completed",
                     "FAILED": "failed",
                     "CANCELLED": "cancelled",
+                    "SKIPPED": "skipped",
                 }[outcome["status"]]
                 await self._event_bus.publish(
                     f"job.item.{event_name}",

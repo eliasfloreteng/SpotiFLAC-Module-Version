@@ -14,7 +14,9 @@ import pytest
 from SpotiFLAC.app import SpotiFLAC_API
 from SpotiFLAC.extensions.catalog import (
     canonical_service_name,
+    extension_id,
     installed_download_services,
+    known_service,
     service_label,
 )
 from SpotiFLAC.webapp import ALLOWED_METHODS
@@ -42,6 +44,7 @@ class _Manager:
         ("ext:tidal-web", "tidal"),
         ("qobuz_py", "qobuz"),
         ("ytmusic-spotiflac", "youtube"),
+        ("youtube-music", "youtube"),
         ("youtube-py", "youtube"),
         ("apple-music-py", "apple"),
         ("deezer", "deezer"),
@@ -50,7 +53,19 @@ class _Manager:
     ],
 )
 def test_extensions_collapse_onto_one_service_name(extension, service):
+    """Verify extension aliases map to their canonical download service."""
     assert canonical_service_name(extension) == service
+
+
+@pytest.mark.parametrize("service", ["youtube", "youtube-music", "gdstudio"])
+def test_mobile_provider_aliases_are_accepted(service):
+    """Verify mobile provider aliases are recognized as known services."""
+    assert known_service(service)
+
+
+def test_mobile_youtube_music_alias_resolves_to_its_extension():
+    """Verify the YouTube Music alias selects its installed extension ID."""
+    assert extension_id("youtube-music") == "ytmusic-spotiflac"
 
 
 def test_two_extensions_for_one_service_are_one_row():

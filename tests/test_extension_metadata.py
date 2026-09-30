@@ -126,7 +126,7 @@ def test_the_extension_is_found_by_the_hosts_it_may_reach() -> None:
     site = site_for_extension(_ext("my-melon-fork", ["www.melon.com"]))
     assert site is not None
     assert site.key == "melon"
-    assert site_for_extension(_ext("x", ["api.song.link"])) is None
+    assert site_for_extension(_ext("x", ["api.example.com"])) is None
     # A download provider that happens to reach the same host is not asked.
     assert (
         site_for_extension(_ext("x", ["melon.com"], types=["download_provider"]))

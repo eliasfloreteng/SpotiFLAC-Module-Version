@@ -57,7 +57,17 @@ class ProviderCandidate:
 class ProviderResolver:
     """Resolve enabled, healthy providers by capability and priority."""
 
-    _provider_priority = ["tidal", "qobuz", "deezer", "apple", "amazon"]
+    # Mirrors the Mobile download path: lossless catalogue providers first,
+    # then lossy/long-tail extension fallbacks.  Installed extension priority
+    # still overrides this list through manifest ``priority`` values.
+    _provider_priority = [
+        "tidal",
+        "qobuz",
+        "deezer",
+        "apple",
+        "amazon",
+        "youtube",
+    ]
 
     def __init__(self, profiles: list[ProviderProfile] | None = None) -> None:
         self._profiles = {profile.name: profile for profile in profiles or []}

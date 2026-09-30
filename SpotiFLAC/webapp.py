@@ -1137,8 +1137,7 @@ def create_app(token: str | None = None, multiuser: bool = False) -> FastAPI:
     #
     # Mounted after the middleware that gates /api/*, so it inherits the same
     # token and session auth rather than reimplementing either.
-    from .application import ApiAdapter, DownloadService
-    from .application import EventBus
+    from .application import ApiAdapter, DownloadService, EventBus, JobService
     from .webapi import ApiDeps, build_v1_router
 
     application_events = EventBus()
@@ -1181,7 +1180,18 @@ def create_app(token: str | None = None, multiuser: bool = False) -> FastAPI:
             broadcast_application_event,
         )
     application_download_service = DownloadService(event_bus=application_events)
+    application_job_service = JobService(
+        download_service=application_download_service,
+        event_bus=application_events,
+    )
+    application_adapter = ApiAdapter(
+        job_service=application_job_service,
+        start_background=True,
+        event_bus=application_events,
+    )
     app.state.application_download_service = application_download_service
+    app.state.application_job_service = application_job_service
+    app.state.application_adapter = application_adapter
 
     app.include_router(
         build_v1_router(
@@ -1189,8 +1199,12 @@ def create_app(token: str | None = None, multiuser: bool = False) -> FastAPI:
                 api_for=api_for,
                 multiuser=multiuser,
                 token_required=bool(token),
-                job_queue=job_queue or download_queue,
-                adapter=ApiAdapter(event_bus=application_events),
+                # The v1 single-user API has its own application job service.
+                # ``download_queue`` is the legacy GUI queue and accepts a
+                # different payload shape (indices/tracks), so handing it a
+                # v1 URL job silently completed zero tracks.
+                job_queue=job_queue if multiuser else None,
+                adapter=application_adapter if not multiuser else None,
                 download_service=application_download_service,
                 username_for=lambda request: getattr(request.state, "username", None),
             )

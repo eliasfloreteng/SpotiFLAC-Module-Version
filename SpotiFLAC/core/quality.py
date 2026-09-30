@@ -12,7 +12,14 @@ _CANONICAL = {
     "DOLBY_ATMOS": ["DOLBY_ATMOS", "ATMOS", "DOLBY", "EAC3", "EC3", "EAC3_JOC"],
 }
 
-_LOSSLESS_PROVIDERS = {"tidal", "qobuz", "amazon", "apple", "deezer"}
+_LOSSLESS_PROVIDERS = {
+    "tidal",
+    "qobuz",
+    "amazon",
+    "apple",
+    "deezer",
+    "gdstudio",
+}
 
 
 def normalize_quality(q: str) -> str:

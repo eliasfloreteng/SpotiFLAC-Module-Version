@@ -1,12 +1,11 @@
-"""A provider that answers "503 … try again in about N minutes" sits out N minutes.
+"""Community and extension cooldowns remain independent.
 
 tidal-py tries the Community (signed-desktop) gateway first on every track.
 During one of that gateway's enforced pauses the extension logged the 503
 with the length of the pause, fell back to public mirrors that timed out,
 failed — and did the same on the next track, about 25 seconds each time,
-before tidal-web downloaded the track in five. The pause is now read out of
-that log line, and tidal-py is skipped until it is over. It is not removed:
-afterwards it is first in line again.
+before tidal-web downloaded the track in five. The Community pause is read
+out of that log line, but tidal-py remains available for public mirrors.
 """
 
 from __future__ import annotations
@@ -91,13 +90,37 @@ def test_a_js_runtime_logs_under_the_extension_s_name() -> None:
 
 
 def test_the_extension_s_log_line_starts_the_pause() -> None:
+    """Verify Community failure logs persist a pause without pausing the extension."""
     pc.watch_extension_logs()
     logging.getLogger(TIDAL_PY).warning(
         "[tidal] Community failed, falling back to public mirrors: %s", OVERLOADED
     )
 
-    assert 50 * 60 < pc.remaining("tidal-py") <= 51 * 60
+    assert pc.remaining("tidal-py") == 0
+    assert 50 * 60 < pc.community_remaining("tidal") <= 51 * 60
     assert (Path(pc._cache_file())).exists()
+
+
+def test_community_cooldown_is_visible_through_the_registry_url(monkeypatch) -> None:
+    """Verify an active Community cooldown hides its registered URL."""
+    pc.pause_community("tidal", 600)
+
+    import SpotiFLAC.core as core
+
+    monkeypatch.setattr(
+        core,
+        "_get_registry",
+        lambda: {"community": {"tidal": "https://community.test"}},
+    )
+    assert core.get_community_url("tidal") == ""
+
+
+def test_community_cooldown_does_not_skip_the_extension() -> None:
+    """Verify Community cooldowns leave both provider extensions eligible."""
+    tidal_py, tidal_web = _TidalPy(), _TidalWeb()
+    pc.pause_community("tidal", 600)
+
+    assert pc.usable_providers([tidal_py, tidal_web]) == [tidal_py, tidal_web]
 
 
 def test_a_js_extension_s_log_line_starts_the_pause() -> None:
@@ -246,6 +269,8 @@ class _WorkingTidalWeb:
 def test_after_the_503_the_next_track_goes_straight_to_tidal_web(
     tmp_path, monkeypatch
 ) -> None:
+    """Verify repeated Community failures still allow extension attempts and fallback."""
+
     async def no_lookup(isrc):
         return None
 
@@ -266,6 +291,6 @@ def test_after_the_503_the_next_track_goes_straight_to_tidal_web(
     )
 
     assert first.success and second.success
-    assert tidal_py.calls == 1  # asked once, then left alone
+    assert tidal_py.calls == 2  # the extension remains usable; only Community pauses
     assert tidal_web.calls == 2
-    assert pc.remaining("tidal-py") > 50 * 60
+    assert pc.community_remaining("tidal") > 50 * 60

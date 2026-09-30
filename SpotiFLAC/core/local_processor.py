@@ -211,7 +211,7 @@ async def _track_for_isrc(
     `isrc:` is an exact operator in Spotify's search, so this is an identity
     lookup rather than a guess, which is why the candidate comes back with
     how="isrc". (The obvious route, link_resolver.spotify_url_for_isrc_async,
-    is not usable: its Songlink backend now answers 401 without an API key.)
+    is not usable as a cross-platform link lookup.)
 
     The duration cross-check is the one piece of doubt worth keeping. It
     costs nothing — both numbers are already in hand — and catches the case

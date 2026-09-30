@@ -75,11 +75,17 @@ class LegacyDownloadAdapter(ProviderExecutor):
 
     @staticmethod
     def options_for(request: DownloadRequest) -> object:
+        """Translate request configuration into legacy downloader options."""
         from SpotiFLAC.downloader import DownloadOptions
 
         config = request.config
         return DownloadOptions(
             output_dir=str(config.output.directory),
+            services=list(config.download.services),
+            filename_format=config.output.filename_format,
+            use_artist_subfolders=config.output.artist_subfolders,
+            use_album_subfolders=config.output.album_subfolders,
+            create_playlist_subfolders=config.output.playlist_subfolders,
             quality=config.download.quality,
             allow_fallback=config.download.allow_fallback,
             max_concurrent_downloads=config.download.max_concurrent,
@@ -92,7 +98,7 @@ class LegacyDownloadAdapter(ProviderExecutor):
             apple_lyrics_word_by_word=config.lyrics.word_by_word,
             enrich_metadata=config.metadata.enrich,
             enrich_providers=config.metadata.providers,
-            output_path=str(config.output.directory),
+            output_path=None,
         )
 
     @classmethod

@@ -946,6 +946,12 @@ async def _solve_impl(
     cancel_event: threading.Event | None = None,
     browser_info: dict | None = None,
 ) -> str | tuple[str, str | None]:
+    """Run a browser challenge and clean up the browser before returning.
+
+    Return the token, or a token/grant pair when capture_callback is enabled.
+    A captured grant can succeed without a token; an unsolved challenge
+    raises TimeoutError.
+    """
     options: ChromiumOptions | None = None
     browser = None
     profile_dir: str | None = None
@@ -1514,7 +1520,11 @@ async def _solve_impl(
             msg,
         )
 
-    if token is None:
+    # A network-captured grant is already the result needed by the signed
+    # session flow. The challenge page may not expose a Turnstile token to
+    # Python at all, even though it has completed /verify and returned a
+    # usable grant. Do not discard that grant by raising for the absent token.
+    if token is None and not (capture_callback and callback_grant):
         raise TimeoutError("Turnstile token not obtained")
     return (token, callback_grant) if capture_callback else token
 

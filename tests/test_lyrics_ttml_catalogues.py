@@ -27,6 +27,7 @@ WORD_LRC = "[00:02.64]<00:02.64>Damn, <00:03.24>every <00:03.64>time"
 LINE_LRC = "[00:02.64]Damn, every time"
 
 BINI_URL = "https://lyrics-storage.binimum.org/GB0000000001.ttml"
+LRC_RED_URL = "https://lrc.red/s/GB0000000001.ttml"
 
 
 class _Response:
@@ -113,6 +114,11 @@ def test_a_link_off_binis_own_host_is_never_taken() -> None:
         assert L._best_bini_result([_result(lyricsUrl=url)], 355, "") is None
 
 
+def test_current_lrc_red_storage_link_is_accepted() -> None:
+    """Verify current LRC.red storage URLs pass BiniLyrics link validation."""
+    assert L._best_bini_result([_result(lyricsUrl=LRC_RED_URL)], 355, "") is not None
+
+
 # --- BiniLyrics, end to end -----------------------------------------------
 
 
@@ -141,6 +147,24 @@ def test_bini_gives_the_word_timed_lrc(monkeypatch) -> None:
 def test_bini_gives_plain_lines_when_words_are_not_wanted(monkeypatch) -> None:
     text, _ = _bini(monkeypatch, [_result()], word_by_word=False)
     assert text == LINE_LRC
+
+
+def test_bini_fetches_ttml_from_current_lrc_red_storage(monkeypatch) -> None:
+    """Verify BiniLyrics fetches LRC.red TTML and converts it to word-timed LRC."""
+    client = _use(
+        monkeypatch,
+        {
+            L._BINI_API: _Response(
+                payload={"results": [_result(lyricsUrl=LRC_RED_URL)]}
+            ),
+            LRC_RED_URL: _Response(text=TTML),
+        },
+    )
+    text = asyncio.run(
+        L._fetch_bini_async("Like Him", "Tyler, The Creator", "Chromakopia", 355)
+    )
+    assert text == WORD_LRC
+    assert client.asked == [L._BINI_API, LRC_RED_URL]
 
 
 def test_bini_with_nothing_for_the_track_gives_nothing(monkeypatch) -> None:

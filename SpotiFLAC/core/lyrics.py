@@ -43,7 +43,18 @@ class LyricsContext:
         return get_primary_artist(self.artist_name)
 
 
-DEFAULT_LYRICS_PROVIDERS = ["apple", "lrclib", "binilyrics", "unison"]
+# JioSaavn is intentionally part of the default chain: it covers Hindi and
+# regional-Indian releases that are often absent from the western lyric
+# catalogues.  Keep Apple first so synced lyrics remain preferred whenever
+# they are available; JioSaavn then fills the catalogue gap before the other
+# plain-text fallbacks.
+DEFAULT_LYRICS_PROVIDERS = [
+    "apple",
+    "jiosaavn",
+    "lrclib",
+    "binilyrics",
+    "unison",
+]
 DEFAULT_ENRICH_PROVIDERS = ["deezer", "apple", "qobuz", "tidal"]
 
 
@@ -971,7 +982,7 @@ def _bini_lyrics_url(value: object) -> str:
     parsed = urllib.parse.urlparse(value)
     host = parsed.hostname or ""
     if parsed.scheme != "https" or not (
-        host == "binimum.org" or host.endswith(".binimum.org")
+        host == "lrc.red" or host == "binimum.org" or host.endswith(".binimum.org")
     ):
         return ""
     return value
@@ -1030,7 +1041,15 @@ async def _fetch_bini_async(
         from .apple_ttml import ttml_to_lrc
 
         client = await NetworkManager.get_async_client_safe()
-        r = await client.get(_BINI_API, params=params, timeout=timeout)
+        # The documented endpoint currently redirects its API traffic to
+        # lrc.red.  NetworkManager deliberately keeps redirects disabled for
+        # generic requests, so opt in only for this known BiniLyrics endpoint.
+        r = await client.get(
+            _BINI_API,
+            params=params,
+            timeout=timeout,
+            follow_redirects=True,
+        )
         if r.status_code != 200:
             return ""
         payload = r.json()
@@ -1132,7 +1151,7 @@ def _best_jiosaavn_result(results: object, duration_s: int) -> dict | None:
     missing-data one — so that is filtered before length is even compared.
     """
     best: dict | None = None
-    best_off = 0
+    best_off: int | None = None
     for item in results if isinstance(results, list) else []:
         if not isinstance(item, dict) or not item.get("id"):
             continue
@@ -1146,7 +1165,7 @@ def _best_jiosaavn_result(results: object, duration_s: int) -> dict | None:
         off = abs(length - duration_s) if duration_s > 0 and length > 0 else 0
         if duration_s > 0 and length > 0 and off > _JIOSAAVN_LENGTH_SLACK_S:
             continue
-        if best is None or off < best_off:
+        if best is None or best_off is None or off < best_off:
             best, best_off = item, off
     return best
 

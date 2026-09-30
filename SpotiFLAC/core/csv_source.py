@@ -614,15 +614,10 @@ async def _spotify_url_for_isrc(
     recording, or it isn't and the row is reported.
 
     Spotify's own catalogue is asked first, through the `isrc:` search
-    operator. That used to go to link_resolver.spotify_url_for_isrc_async()
-    instead, whose Songlink backend now answers every request with
-    401 PUBLIC_API_ACCESS_DEPRECATED — Odesli retired free public access to
-    the v1-alpha.1 API. The effect was silent: a row identified only by its
-    ISRC, which is the one kind of row that could have been matched with
-    certainty, came back as "ISRC not found".
+    operator. This exact identity lookup avoids guessing from title or artist.
 
-    The resolver is still tried afterwards, so an injected or future working
-    one is used rather than ignored.
+    The cross-platform resolver is still tried afterwards, so an injected or
+    future working one is used rather than ignored.
     """
     if client is not None:
         try:

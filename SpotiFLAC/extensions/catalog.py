@@ -14,6 +14,8 @@ SERVICE_ALIASES = {
     "deezer": "deezer",
     "soundcloud": "soundcloud",
     "youtube": "ytmusic-spotiflac",
+    "youtube-music": "ytmusic-spotiflac",
+    "gdstudio": "gdstudio",
     "pandora": "pandora",
 }
 
@@ -49,6 +51,12 @@ def canonical_service_name(ext_name: str) -> str | None:
 
     value = value.replace("_", "-")
     value = value.replace("-web", "").replace("-py", "")
+
+    # The Mobile extension is named YouTube Music, while the downloader's
+    # public service id is kept as ``youtube`` for compatibility with the
+    # legacy Python provider and its quality mapping.
+    if value.startswith("ytmusic") or value == "youtube-music":
+        return "youtube"
 
     alias_reverse = {v.lower(): k for k, v in SERVICE_ALIASES.items()}
     if value in alias_reverse:

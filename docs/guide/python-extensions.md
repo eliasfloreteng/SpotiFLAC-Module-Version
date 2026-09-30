@@ -317,7 +317,7 @@ if not ok:
 | Module | Use |
 | --- | --- |
 | `core.isrc_utils` | `normalize_isrc(s)`, `is_valid_isrc(s)`, `confirm_isrc_with_qobuz_async(...)`. |
-| `core.link_resolver` | `LinkResolver(AsyncHttpClient("odesli")).resolve_all_async(spotify_id)` → `{ "soundcloud": url, "tidal": url, ... }` cross-service links via Odesli. |
+| `core.link_resolver` | `LinkResolver().resolve_all_async(spotify_id)` → `{ "soundcloud": url, "tidal": url, ... }` cross-service links via the configured resolver API. |
 | `core.musicbrainz` | `fetch_mb_metadata_async(isrc)`, `mb_result_to_tags(...)` for richer tags. |
 | `core.quality` | `normalize_quality(q)`, `quality_for_provider(name, q)`, `quality_fallback_chain(q)`. |
 | `core.provider_stats` | `record_success_async(name)`, `record_failure_async(name)`, `prioritize_providers_async(...)` — feeds the adaptive provider ordering. |

@@ -44,9 +44,17 @@ class _Response:
     content = b"{}"
 
 
-def _fetch(client, **kwargs) -> dict:
+def _fetch(client, body=None, **kwargs) -> dict:
+    """Run a signed audio request synchronously with a configurable request body."""
     return asyncio.run(
-        ssm.perform_signed_fetch(client, "POST", "/dl/tid", {}, {}, **kwargs)
+        ssm.perform_signed_fetch(
+            client,
+            "POST",
+            "/dl/tid",
+            {} if body is None else body,
+            {},
+            **kwargs,
+        )
     )
 
 
@@ -154,6 +162,55 @@ def test_the_pause_file_is_not_a_session_file(tmp_path) -> None:
     ssm._record_auth_failure(client)
     assert ssm._auth_backoff_path(client).name.startswith(".")
     assert ssm._auth_backoff_path(client) != client._path
+
+
+def test_two_consecutive_audio_timeouts_return_terminal_provider_fallback(
+    tmp_path, monkeypatch
+) -> None:
+    """The second stalled /dl request must stop the extension retry storm."""
+    ssm._DOWNLOAD_TIMEOUT_STREAKS.clear()
+    client = _client(tmp_path)
+    client.session_id = "sess"
+    client.session_secret = "secret"
+    client.expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+
+    async def _timeout(*args, **kwargs):
+        """Simulate an audio endpoint that always raises a read timeout."""
+        raise httpx.ReadTimeout("audio endpoint stalled")
+
+    monkeypatch.setattr(ssm.SignedSessionClient, "request", _timeout)
+
+    first = _fetch(client, body={"id": "303900465"})
+    second = _fetch(client, body={"id": "303900465"})
+
+    assert "ReadTimeout" in first["error"]
+    assert second["code"] == "RESOLUTION_TIMEOUT"
+    assert second["retryable"] is False
+    assert second["retryMode"] == "none"
+    assert "switching provider" in second["error"]
+    assert not ssm._DOWNLOAD_TIMEOUT_STREAKS
+
+
+def test_audio_timeout_streak_is_per_track(tmp_path, monkeypatch) -> None:
+    """Verify timeouts for different tracks maintain independent streaks."""
+    ssm._DOWNLOAD_TIMEOUT_STREAKS.clear()
+    client = _client(tmp_path)
+    client.session_id = "sess"
+    client.session_secret = "secret"
+    client.expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+
+    async def _timeout(*args, **kwargs):
+        """Simulate a read timeout for each requested audio track."""
+        raise httpx.ReadTimeout("audio endpoint stalled")
+
+    monkeypatch.setattr(ssm.SignedSessionClient, "request", _timeout)
+
+    first_track = _fetch(client, body={"id": "track-a"})
+    other_track = _fetch(client, body={"id": "track-b"})
+
+    assert "ReadTimeout" in first_track["error"]
+    assert "ReadTimeout" in other_track["error"]
+    assert len(ssm._DOWNLOAD_TIMEOUT_STREAKS) == 2
 
 
 # --- refresh ----------------------------------------------------------------

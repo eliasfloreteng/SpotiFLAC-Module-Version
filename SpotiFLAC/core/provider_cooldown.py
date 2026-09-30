@@ -1,4 +1,4 @@
-"""core/provider_cooldown.py — a provider that asked for a break gets one.
+"""Cooldowns for extensions and their independent upstream APIs.
 
 tidal-py tries the Community (signed-desktop) gateway first on every track.
 That gateway has enforced pauses — the SpotiFLAC desktop logic it comes from
@@ -8,11 +8,10 @@ that, falls back to public mirrors that time out, and fails; on the next
 track it does all of it again. Roughly 25 seconds per track went to a
 provider that had said, in words, when it would work again.
 
-This reads that answer out of the extension's log and keeps the provider out
-of the rotation until then. The provider is not removed: once the pause is
-over it is tried first again, in the order the user configured. The pause is
-kept in the cache directory, so a restart does not forget it and start the
-25-second detour over.
+Community pauses are kept separately from extension pauses. A Community 503
+therefore disables only that Community endpoint; the owning extension remains
+available for its public mirrors. Cooldowns are kept in the cache directory,
+so a restart does not forget them.
 """
 
 from __future__ import annotations
@@ -30,7 +29,11 @@ from .paths import cache_path
 
 logger = logging.getLogger(__name__)
 
-_CACHE_FILE_NAME = "provider_cooldowns.json"
+# v2 separates endpoint cooldowns (for example ``community:tidal``) from
+# extension cooldowns. Do not reuse the old file: its ``tidal-py`` entries
+# represented Community pauses and would incorrectly keep the whole extension
+# blocked after upgrading.
+_CACHE_FILE_NAME = "provider_cooldowns_v2.json"
 
 #: Module (and so logger) prefix of the Python `.sflx` extensions — see
 #: extensions/python_provider._module_name.
@@ -51,6 +54,7 @@ _WAIT = re.compile(r"try again in (?:about )?(\d+)\s*(minute|min|hour|h)", re.I)
 
 #: A pause longer than a day is read as a misparse, not as a promise.
 _MAX_PAUSE_S = 24 * 3600
+_COMMUNITY_PREFIX = "community:"
 
 _lock = threading.Lock()
 
@@ -155,6 +159,27 @@ def pause(key: str, seconds: float, reason: str = "", now: float | None = None) 
     )
 
 
+def community_key(provider: str) -> str:
+    """Return the cache key for a Community API belonging to ``provider``."""
+    provider = str(provider or "").strip()
+    return f"{_COMMUNITY_PREFIX}{provider}" if provider else ""
+
+
+def pause_community(
+    provider: str,
+    seconds: float,
+    reason: str = "",
+    now: float | None = None,
+) -> None:
+    """Pause only a provider's Community API, not the provider itself."""
+    pause(community_key(provider), seconds, reason, now)
+
+
+def community_remaining(provider: str, now: float | None = None) -> float:
+    """Seconds left before a provider's Community API may be retried."""
+    return remaining(community_key(provider), now)
+
+
 def remaining(key: str, now: float | None = None) -> float:
     """Seconds left on `key`'s pause; 0 when it has none."""
     if not key:
@@ -199,6 +224,7 @@ class _PauseWatcher(logging.Handler):
         super().__init__(level=logging.WARNING)
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Translate extension pause logs into Community or extension cooldowns."""
         key = extension_key(record.name)
         if not key:
             return
@@ -208,7 +234,15 @@ class _PauseWatcher(logging.Handler):
             return
         seconds = pause_seconds(message)
         if seconds:
-            pause(key, seconds, message)
+            # tidal-py logs the Community failure through the same logger as
+            # its public mirrors. Do not take the whole extension offline:
+            # get_community_url() consults this separate cooldown and makes
+            # only the Community URL temporarily unavailable.
+            if "community" in message.lower():
+                provider = key.removesuffix("-py")
+                pause_community(provider, seconds, message)
+            else:
+                pause(key, seconds, message)
 
 
 _watcher = _PauseWatcher()

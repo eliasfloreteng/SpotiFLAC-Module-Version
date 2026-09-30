@@ -135,6 +135,8 @@ class DownloadSkip:
     track: TrackMetadata | None = None
     reason: str = ""
     provider: str | None = None
+    source: str | None = None
+    file_path: str | None = None
 
 
 @dataclass

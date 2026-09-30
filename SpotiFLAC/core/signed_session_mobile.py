@@ -52,6 +52,16 @@ _REFRESH_DONE_AT: dict[str, float] = {}
 _REFRESH_LOCKS: dict[str, threading.Lock] = {}
 _REFRESH_LOCKS_GUARD = threading.Lock()
 
+# A stalled audio endpoint is retried once by the extension, but letting it
+# continue through the extension's whole retry budget can keep a track on one
+# provider for several minutes.  Keep this state at module level because
+# runtime_features.signed_fetch() creates a fresh client for every signed
+# request (and therefore every /tickets -> /dl pair).
+_DOWNLOAD_TIMEOUT_LIMIT = 2
+_DOWNLOAD_TIMEOUT_FORGET_S = 300.0
+_DOWNLOAD_TIMEOUT_STREAKS: dict[str, tuple[int, float]] = {}
+_DOWNLOAD_TIMEOUT_STREAKS_LOCK = threading.Lock()
+
 
 def _get_refresh_lock(key: str) -> threading.Lock:
     with _REFRESH_LOCKS_GUARD:
@@ -1221,6 +1231,47 @@ def _format_pause(seconds: float) -> str:
     return f"{minutes // 60} h {minutes % 60:02d} min"
 
 
+def _download_timeout_key(
+    client: SignedSessionClient,
+    method: str,
+    path: str,
+    body: Any,
+) -> str:
+    """Return the stable key used for consecutive audio timeouts.
+
+    Signed clients are short-lived, so the key must not contain the client
+    object's identity.  TIDAL's /dl/tid payload carries the native track id;
+    retaining the path as well keeps the guard scoped to one audio endpoint.
+    """
+    track_id = ""
+    if isinstance(body, dict):
+        track_id = str(body.get("id") or body.get("track_id") or "").strip()
+    if not track_id:
+        track_id = "<unknown-track>"
+    namespace = str(getattr(client, "namespace", "") or "")
+    base_url = str(getattr(client, "base_url", "") or "")
+    return "|".join((namespace, base_url, method.upper(), path, track_id))
+
+
+def _record_download_timeout(key: str) -> int:
+    """Record one consecutive audio timeout and return the new streak."""
+    now = time.monotonic()
+    with _DOWNLOAD_TIMEOUT_STREAKS_LOCK:
+        previous = _DOWNLOAD_TIMEOUT_STREAKS.get(key)
+        if previous is None or now - previous[1] > _DOWNLOAD_TIMEOUT_FORGET_S:
+            count = 1
+        else:
+            count = previous[0] + 1
+        _DOWNLOAD_TIMEOUT_STREAKS[key] = (count, now)
+        return count
+
+
+def _clear_download_timeout(key: str) -> None:
+    """Remove the timeout streak for a request key while holding its lock."""
+    with _DOWNLOAD_TIMEOUT_STREAKS_LOCK:
+        _DOWNLOAD_TIMEOUT_STREAKS.pop(key, None)
+
+
 async def perform_signed_fetch(
     client: SignedSessionClient,
     method: str,
@@ -1254,6 +1305,10 @@ async def perform_signed_fetch(
     # Bound before the try so the failure log can time a call that died
     # during authentication, long before the request itself was timed.
     call_started = time.monotonic()
+    is_download = "/dl" in path
+    timeout_key = (
+        _download_timeout_key(client, method, path, body) if is_download else ""
+    )
     try:
         # If we're not authenticated, acquire the async Lock
         if not client.authenticated:
@@ -1321,6 +1376,8 @@ async def perform_signed_fetch(
         # signed download. Naming them both at info level is what tells a
         # stalled run apart from a slow one without turning on debug and
         # drowning in httpcore frames.
+        # Keep this local classification beside the logging branches as well
+        # as above, where it is needed by the exception path.
         is_download = "/dl" in path
         if is_ticket:
             logger.info(
@@ -1347,6 +1404,10 @@ async def perform_signed_fetch(
         started = time.monotonic()
         resp = await client.request(method, path, json_body=body, extra_headers=headers)
         elapsed = time.monotonic() - started
+        if is_download:
+            # Any response, including an HTTP error, breaks a timeout streak:
+            # only two uninterrupted request timeouts should trigger fallback.
+            _clear_download_timeout(timeout_key)
 
         # How long a refusal says to wait: the Retry-After header first, else
         # the gateway's error envelope. Worked out before the log lines below,
@@ -1462,6 +1523,42 @@ async def perform_signed_fetch(
         # losing the reason and the Retry-After with it. Same treatment as
         # the authentication path above.
         detail = str(exc) or type(exc).__name__
+        if is_download and isinstance(exc, httpx.TimeoutException):
+            streak = _record_download_timeout(timeout_key)
+            if streak >= _DOWNLOAD_TIMEOUT_LIMIT:
+                # `tidal-web` treats RESOLUTION_TIMEOUT as terminal for the
+                # current provider attempt.  It then returns a failed result
+                # to the Python host, whose normal provider loop advances to
+                # Qobuz/Amazon/Deezer.  This avoids changing the installed JS
+                # extension while stopping its longer internal retry storm.
+                _clear_download_timeout(timeout_key)
+                logger.warning(
+                    "[signed_session:%s] audio timeout threshold reached "
+                    "for %s after %d consecutive timeouts; provider fallback",
+                    client.namespace,
+                    path,
+                    streak,
+                )
+                return {
+                    "error": (
+                        f"Audio request timed out {streak} times consecutively; "
+                        "switching provider"
+                    ),
+                    "code": "RESOLUTION_TIMEOUT",
+                    "retryable": False,
+                    "retryMode": "none",
+                }
+            logger.warning(
+                "[signed_session:%s] audio timeout %d/%d for %s",
+                client.namespace,
+                streak,
+                _DOWNLOAD_TIMEOUT_LIMIT,
+                path,
+            )
+        elif is_download:
+            # "Consecutive" means a successful response or a different
+            # failure starts a fresh pair of timeout attempts.
+            _clear_download_timeout(timeout_key)
         logger.warning(
             "[signed_session:%s] signedFetch %s %s failed after %.1fs (%s: %s)",
             client.namespace,
