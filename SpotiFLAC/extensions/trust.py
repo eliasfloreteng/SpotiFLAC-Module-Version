@@ -33,16 +33,16 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from ..core.atomic_io import write_private_json
+from ..core.paths import data_path
 
 logger = logging.getLogger(__name__)
 
-TRUSTED_KEYS_FILE = Path.home() / ".spotiflac" / "trusted_keys.json"
+TRUSTED_KEYS_FILE = data_path("trusted_keys.json")
 
 
 class TrustKeyError(ValueError):

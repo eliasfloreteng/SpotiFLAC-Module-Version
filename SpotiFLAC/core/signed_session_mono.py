@@ -28,12 +28,16 @@ from pydoll.browser.chromium import Chrome
 from pydoll.protocol.network.events import NetworkEvent
 
 from SpotiFLAC.core import get_amazon_endpoint
+from SpotiFLAC.core.paths import data_dir
 from SpotiFLAC.core.solver import (
+    _cleanup_profile_dir,
+    _cleanup_pydoll_temp_dirs,
     _ensure_xvfb,
     _kill_by_profile_dir,
     _try_minimize_window,
     acquire_browser_slot,
     build_chromium_options,
+    isolate_browser_temp_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,7 +66,7 @@ class MonochromeSessionRecord:
 
 
 def ensure_app_dir() -> str:
-    app_dir = os.path.expanduser("~/.spotiflac")
+    app_dir = str(data_dir())
     os.makedirs(app_dir, exist_ok=True)
     return app_dir
 
@@ -178,9 +182,14 @@ class _MonochromeBrowserSession:
         # push the real number of live Chrome processes past the configured
         # cap, reintroducing the OOM risk the semaphore exists to prevent.
         slot_cm = acquire_browser_slot()
-        await slot_cm.__aenter__()
+        try:
+            await slot_cm.__aenter__()
+        except BaseException:
+            _cleanup_profile_dir(profile_dir)
+            raise
         try:
             self._browser = Chrome(options=options)
+            isolate_browser_temp_dir(self._browser, profile_dir)
             # Bounded: a hang here must not hold the slot forever.
             self._tab = await asyncio.wait_for(
                 self._browser.start(),
@@ -196,6 +205,8 @@ class _MonochromeBrowserSession:
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(self._browser.stop(), timeout=15.0)
             _kill_by_profile_dir(profile_dir)
+            _cleanup_pydoll_temp_dirs(self._browser)
+            _cleanup_profile_dir(profile_dir)
             self._browser = None
             self._tab = None
             with contextlib.suppress(Exception):
@@ -447,6 +458,7 @@ class _MonochromeBrowserSession:
         `_ensure_browser()`. Shared by `_hard_reset()` and `close()` so the
         slot is never left held by a browser that's no longer running.
         """
+        profile_dir = self._profile_dir
         if self._browser is not None:
             stopped_cleanly = False
             try:
@@ -454,8 +466,14 @@ class _MonochromeBrowserSession:
                 stopped_cleanly = True
             except Exception:
                 pass
-            if not stopped_cleanly and self._profile_dir:
-                _kill_by_profile_dir(self._profile_dir)
+            if not stopped_cleanly and profile_dir:
+                _kill_by_profile_dir(profile_dir)
+        # Pydoll skips its usual temp-directory cleanup when we have to force
+        # kill the browser; run it explicitly after the process is gone.
+        _cleanup_pydoll_temp_dirs(self._browser)
+        # Remove Chromium's cache/profile only after its browser process is
+        # stopped, including when the session is reset before completion.
+        _cleanup_profile_dir(profile_dir)
         self._browser = None
         self._tab = None
         self._on_page = False
