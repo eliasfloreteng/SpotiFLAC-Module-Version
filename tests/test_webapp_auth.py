@@ -1,4 +1,4 @@
-"""Tests for the optional --web-token shared-secret auth in SpotiFLAC/webapp.py.
+"""Tests for the optional --web-token shared-secret auth in mornye/webapp.py.
 
 Only the auth gate itself is exercised here (via cheap, no-network Api
 methods like get_version) — not the rest of the HTTP surface, which needs a
@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
-webapp = pytest.importorskip("SpotiFLAC.webapp")
+webapp = pytest.importorskip("mornye.webapp")
 
 TestClient = fastapi_testclient.TestClient
 
