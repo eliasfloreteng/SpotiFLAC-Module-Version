@@ -54,7 +54,7 @@ def test_documentation_site_local_assets_and_links_exist() -> None:
 def test_homepage_examples_use_installable_distribution_and_import_name() -> None:
     html = (DOCS_DIR / "index.html").read_text(encoding="utf-8")
 
-    assert "python -m pip install ." in html
+    assert "pip install mornye" in html
     assert "from</span> mornye <span" in html
     assert "pip install Mornye" not in html
     assert "from Mornye " not in html

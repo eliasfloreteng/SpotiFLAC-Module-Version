@@ -111,39 +111,6 @@ function switchView(name) {
   document.querySelectorAll('.nav-btn[id^="nav-"]').forEach(b => b.classList.remove('active'));
   $('view-' + name)?.classList.add('active');
   $('nav-' + name)?.classList.add('active');
-  const networkBar = $('titlebar-network');
-  if (name === 'settings') {
-    networkBar?.classList.remove('hidden');
-    loadNetworkStatus();
-  } else {
-    networkBar?.classList.add('hidden');
-  }
-}
-
-let networkStatus = { ip: '', country_name: 'Italy', country_code: 'IT' };
-
-// Fetches IP/country info for the Settings titlebar. Guarded throughout:
-// safe to call even if titlebar-network isn't present in the current
-// markup, and never throws on a failed/slow lookup.
-async function loadNetworkStatus() {
-  try {
-    const api = window.pywebview?.api;
-    if (!api || typeof api.get_network_status !== 'function') return;
-    const status = await api.get_network_status();
-    if (status) {
-      networkStatus = { ...networkStatus, ...status };
-    }
-    const ipEl = $('network-ip');
-    if (ipEl) ipEl.textContent = networkStatus.ip || '';
-    const countryEl = $('network-country');
-    if (countryEl) countryEl.textContent = networkStatus.country_name || '';
-  } catch (err) {
-    console.warn('[NetworkStatus] failed to load:', err);
-  }
-}
-
-function togglePublicIp() {
-  /* removed by design */
 }
 
 function switchTab(name, btn) {
@@ -361,6 +328,12 @@ function applySettings(settings = {}) {
   if ($('config-lyrics')) { $('config-lyrics').checked = cfg.lyrics; onLyricsChange(); }
   if ($('config-apple-wbw')) $('config-apple-wbw').checked = cfg.apple_lyrics_word_by_word !== false;
   if ($('config-enrich')) { $('config-enrich').checked = cfg.enrich_metadata; onEnrichChange(); }
+  if ($('config-animated-artwork')) {
+    $('config-animated-artwork').checked = cfg.save_animated_artwork === true;
+  }
+  if ($('config-animated-artwork-api-url')) {
+    $('config-animated-artwork-api-url').value = cfg.animated_artwork_api_url || '';
+  }
   if ($('config-filename')) $('config-filename').value = cfg.filename_format;
   if ($('config-track-numbers')) { $('config-track-numbers').checked = cfg.use_track_numbers; onTNChange(); }
   if ($('config-album-track-numbers')) $('config-album-track-numbers').checked = cfg.use_album_track_numbers;
@@ -600,16 +573,11 @@ const ALL_LYRICS = [
   { id:'apple',      label:'Apple Music',on:true, iconFile:'am.png', iconClass:'apple' },
   { id:'binilyrics', label:'BiniLyrics', on:true, icon:'BL', iconClass:'binilyrics' },
   { id:'lrclib',     label:'LRCLib',     on:true,  iconFile:'lrclib.png', iconClass:'lrclib' },
+  { id:'lyricsplus', label:'LyricsPlus', on:false, icon:'LP', iconClass:'lyricsplus' },
+  { id:'lrcred',     label:'lrc.red',    on:false, icon:'LR', iconClass:'lrcred' },
   { id:'amazon',     label:'Amazon',     on:false, iconFile:'amzn.png', iconClass:'amazon' },
-  { id:'deezer',     label:'Deezer',     on:false, icon:'DZ', iconClass:'deezer' },
-  { id:'genius',     label:'Genius',     on:false, icon:'G',  iconClass:'genius' },
-  { id:'netease',    label:'NetEase',    on:false, icon:'NE', iconClass:'netease' },
-  { id:'qq',         label:'QQ Music',   on:false, icon:'QQ', iconClass:'qq' },
-  { id:'youtube',    label:'YouTube',    on:false, icon:'YT', iconClass:'youtube' },
-  { id:'kugou',      label:'Kugou',      on:false, icon:'KG', iconClass:'kugou' },
   { id:'unison',     label:'Unison',     on:false, icon:'UN', iconClass:'unison' },
   { id:'jiosaavn',   label:'JioSaavn',   on:false, icon:'JS', iconClass:'jiosaavn' },
-  { id:'musixmatch', label:'Musixmatch', on:false, iconFile:'musixmatch.svg', iconClass:'musixmatch' },
   { id:'spotify',    label:'Spotify',    on:false, iconFile:'spotify.svg', iconClass:'spotify' },
 ];
 const ALL_ENRICH = [
@@ -630,6 +598,8 @@ const DEFAULT_SETTINGS = {
   allow_fallback: false,
   lyrics: true,
   enrich_metadata: true,
+  save_animated_artwork: false,
+  animated_artwork_api_url: 'https://artwork.m8tec.top',
   filename_format: '{title} - {artist}',
   use_track_numbers: false,
   use_album_track_numbers: false,
@@ -843,16 +813,11 @@ let lastAppliedServices = ALL_SERVICES.filter(s => s.on).map(s => s.id);
 // ── HC chips ─────────────────────────────────────────────────────────────────
 const API_SOURCES = [
   { id:'apple',      type:'apple',      name:'Apple Music Lyrics', url:'' },
+  { id:'lyricsplus', type:'lyricsplus', name:'LyricsPlus',          url:'' },
+  { id:'lrcred',     type:'lrcred',     name:'lrc.red',             url:'' },
   { id:'lrclib',     type:'lrclib',     name:'LRCLIB',             url:'' },
-  { id:'musixmatch', type:'musixmatch', name:'Musixmatch',          url:'' },
   { id:'spotify',    type:'spotify',    name:'Spotify Lyrics',     url:'' },
   { id:'amazon',     type:'amazon',     name:'Amazon Lyrics',      url:'' },
-  { id:'deezer',     type:'deezer',     name:'Deezer Lyrics',      url:'' },
-  { id:'genius',     type:'genius',     name:'Genius Lyrics',      url:'' },
-  { id:'netease',    type:'netease',    name:'NetEase Lyrics',     url:'' },
-  { id:'qq',         type:'qq',         name:'QQ Music Lyrics',    url:'' },
-  { id:'youtube',    type:'youtube',    name:'YouTube Lyrics',    url:'' },
-  { id:'kugou',      type:'kugou',      name:'Kugou Lyrics',      url:'' },
   { id:'binilyrics', type:'binilyrics', name:'BiniLyrics',        url:'' },
   { id:'unison',     type:'unison',     name:'Unison',            url:'' },
   { id:'jiosaavn',   type:'jiosaavn',   name:'JioSaavn',          url:'' },
@@ -4231,6 +4196,8 @@ function buildConfig() {
     lyrics_providers:       getChecked('lyrics-list'),
     apple_lyrics_word_by_word: $('config-apple-wbw') ? $('config-apple-wbw').checked : true,
     enrich_metadata:        $('config-enrich').checked,
+    save_animated_artwork:  $('config-animated-artwork')?.checked || false,
+    animated_artwork_api_url: $('config-animated-artwork-api-url')?.value.trim() || '',
     enrich_providers:       getChecked('enrich-list'),
     filename_format:         $('config-filename').value.trim() || '{title} - {artist}',
     use_track_numbers:      $('config-track-numbers').checked,
@@ -4591,6 +4558,12 @@ async function loadProfile() {
   $('config-lyrics').checked = data.lyrics !== false;
   if ($('config-apple-wbw')) $('config-apple-wbw').checked = data.apple_lyrics_word_by_word !== false;
   $('config-enrich').checked        = data.enrich_metadata !== false; onEnrichChange();
+  if ($('config-animated-artwork')) {
+    $('config-animated-artwork').checked = data.save_animated_artwork === true;
+  }
+  if ($('config-animated-artwork-api-url')) {
+    $('config-animated-artwork-api-url').value = data.animated_artwork_api_url || '';
+  }
   updateAllApiConfigDisplays();
   isDirty = true;
   updateSaveButtonVisual();
@@ -6843,9 +6816,99 @@ function statsSection(title, inner, note) {
     </div>`;
 }
 
+let statsSmbScanActive = false;
+
+function setStatsSmbStatus(message, isError = false) {
+  const status = $('stats-smb-status');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('hidden', !message);
+  status.classList.toggle('error', isError);
+}
+
+async function loadStatsSmbDestinations() {
+  const select = $('stats-smb-destination');
+  const button = $('stats-smb-scan');
+  if (!select || !button) return;
+  const previous = select.value;
+  if (!window.pywebview?.api?.list_network_destinations) {
+    select.replaceChildren(new Option('SMB scan unavailable', ''));
+    select.disabled = true;
+    button.disabled = true;
+    return;
+  }
+  try {
+    const profiles = await window.pywebview.api.list_network_destinations();
+    select.replaceChildren(new Option(
+      profiles.length ? 'Select SMB library…' : 'No saved SMB destinations',
+      '',
+    ));
+    for (const profile of profiles) {
+      select.add(new Option(`${profile.name} — ${profile.host}/${profile.share}`, profile.id));
+    }
+    select.value = profiles.some(profile => profile.id === previous) ? previous : '';
+    select.disabled = profiles.length === 0 || statsSmbScanActive;
+    button.disabled = profiles.length === 0 || statsSmbScanActive;
+  } catch (error) {
+    select.replaceChildren(new Option('SMB destinations unavailable', ''));
+    select.disabled = true;
+    button.disabled = true;
+  }
+}
+
+async function scanSmbLibrary() {
+  const profileId = $('stats-smb-destination')?.value;
+  const button = $('stats-smb-scan');
+  if (!profileId || !button || statsSmbScanActive) return;
+  if (!window.pywebview?.api?.scan_smb_library) {
+    setStatsSmbStatus('SMB scanning is unavailable in this build.', true);
+    return;
+  }
+  statsSmbScanActive = true;
+  button.disabled = true;
+  button.classList.add('ta-loading');
+  setStatsSmbStatus('Connecting to SMB library…');
+  $('stats-body').innerHTML = '<div class="s-label" style="font-size:11.5px;">Scanning SMB library…</div>';
+  try {
+    const result = await window.pywebview.api.scan_smb_library(profileId);
+    if (result?.status === 'error') throw new Error(result.error || 'Could not start SMB scan.');
+  } catch (error) {
+    finishSmbStatsScan();
+    setStatsSmbStatus(error.message || 'Could not start SMB scan.', true);
+  }
+}
+
+function finishSmbStatsScan() {
+  statsSmbScanActive = false;
+  $('stats-smb-scan')?.classList.remove('ta-loading');
+  void loadStatsSmbDestinations();
+}
+
+window.app_smb_library_progress = function(payload) {
+  const { done = 0, total = 0 } = payload || {};
+  setStatsSmbStatus(total ? `Scanning SMB library · ${done} of ${total} files` : 'No supported audio files found.');
+};
+
+window.app_smb_library_results = function(report) {
+  finishSmbStatsScan();
+  const scan = report?.scan || {};
+  const unreadable = scan.unreadable || 0;
+  setStatsSmbStatus(
+    `${scan.readable || 0} audio files read${unreadable ? ` · ${unreadable} unreadable` : ''}`,
+    unreadable > 0 && !(scan.readable > 0),
+  );
+  renderStats(report);
+};
+
+window.app_smb_library_error = function(message) {
+  finishSmbStatsScan();
+  setStatsSmbStatus(message || 'SMB library scan failed.', true);
+};
+
 async function loadStats() {
   const body = $('stats-body');
   if (!body) return;
+  void loadStatsSmbDestinations();
   if (!window.pywebview?.api?.get_stats) {
     body.innerHTML = '<div class="s-label" style="font-size:11.5px;">Statistics are unavailable in this build.</div>';
     return;
@@ -6868,17 +6931,25 @@ function renderStats(doc) {
   }
 
   const totals = doc.totals || {};
+  const isSmbScan = doc.source === 'smb';
   if (!totals.tracks) {
+    const scan = doc.scan || {};
     body.innerHTML = `<div class="s-section">${emptyState(
       'chart',
-      'Nothing to count yet',
-      'This is built from the download log, which fills up as you fetch tracks. '
-      + 'Come back after a download or two.',
+      isSmbScan ? 'No readable audio files' : 'Nothing to count yet',
+      isSmbScan
+        ? `${scan.files || 0} supported audio files scanned; none had readable metadata.`
+        : 'This is built from the download log, which fills up as you fetch tracks. '
+          + 'Come back after a download or two.',
     )}</div>`;
     return;
   }
 
   const sections = [];
+  if (isSmbScan) {
+    const scan = doc.scan || {};
+    sections.push(`<div class="stats-source-note"><strong>SMB library</strong><span>${regEscapeHtml(doc.source_name || '')} · ${scan.files || 0} files scanned${scan.unreadable ? ` · ${scan.unreadable} unreadable` : ''}</span></div>`);
+  }
 
   sections.push(`
     <div class="stat-tiles">
@@ -6908,7 +6979,9 @@ function renderStats(doc) {
     'Top genres',
     statsBars((genres.entries || []).map((e) => ({ label: e.name, value: e.tracks }))),
     genres.unknown
-      ? `Known for ${genres.known} of ${totals.tracks} tracks — a genre needs metadata enrichment to have been on when the track was downloaded.`
+      ? isSmbScan
+        ? `Genre tags found for ${genres.known} of ${totals.tracks} readable tracks.`
+        : `Known for ${genres.known} of ${totals.tracks} tracks — a genre needs metadata enrichment to have been on when the track was downloaded.`
       : '',
   ));
 
@@ -6917,22 +6990,28 @@ function renderStats(doc) {
     sections.push(statsSection(
       'By decade',
       statsBars(decades.entries.map((e) => ({ label: e.name, value: e.tracks }))),
-      decades.unknown ? `Release year known for ${decades.known} of ${totals.tracks} tracks.` : '',
+      decades.unknown
+        ? `${isSmbScan ? 'Release year tags' : 'Release year'} known for ${decades.known} of ${totals.tracks} tracks.`
+        : '',
     ));
   }
 
   const repeats = doc.top_tracks || [];
   if (repeats.length) {
     sections.push(statsSection(
-      'Fetched more than once',
+      isSmbScan ? 'Top tracks' : 'Fetched more than once',
       statsBars(repeats.map((e) => ({ label: `${e.name} — ${e.artist}`, value: e.tracks }))),
-      'A re-download after a quality upgrade, or the same song from two playlists.',
+      isSmbScan
+        ? 'Most common track names and artists discovered in the SMB library scan.'
+        : 'A re-download after a quality upgrade, or the same song from two playlists.',
     ));
   }
 
-  sections.push(statsSection('Providers', statsBars(
-    (doc.providers || []).map((e) => ({ label: e.name, value: e.tracks })),
-  )));
+  if (!isSmbScan) {
+    sections.push(statsSection('Providers', statsBars(
+      (doc.providers || []).map((e) => ({ label: e.name, value: e.tracks })),
+    )));
+  }
 
   const formats = doc.formats || [];
   if (formats.length) {
@@ -6942,7 +7021,7 @@ function renderStats(doc) {
   }
 
   const timeline = (doc.timeline || []).slice(-12);
-  if (timeline.length) {
+  if (!isSmbScan && timeline.length) {
     sections.push(statsSection('Last months', statsBars(
       timeline.map((e) => ({ label: e.month, value: e.tracks })),
     )));
@@ -6950,20 +7029,20 @@ function renderStats(doc) {
 
   const activity = doc.activity || {};
   const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-  if ((activity.by_weekday || []).some((n) => n)) {
+  if (!isSmbScan && (activity.by_weekday || []).some((n) => n)) {
     sections.push(statsSection('By weekday', statsBars(
       activity.by_weekday.map((count, index) => ({ label: weekdays[index], value: count })),
     )));
   }
 
   const facts = [];
-  if (activity.busiest_day) {
+  if (!isSmbScan && activity.busiest_day) {
     facts.push(`Busiest day: ${activity.busiest_day.date} (${activity.busiest_day.tracks} tracks)`);
   }
-  if (activity.active_days) {
+  if (!isSmbScan && activity.active_days) {
     facts.push(`Downloaded on ${activity.active_days} day(s) · longest streak ${activity.longest_streak}`);
   }
-  if (doc.first) {
+  if (!isSmbScan && doc.first) {
     const when = new Date((doc.first.downloaded_at || 0) * 1000).toLocaleDateString();
     facts.push(`First in this period: ${doc.first.title} — ${doc.first.artist} (${when})`);
   }

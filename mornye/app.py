@@ -614,7 +614,21 @@ class MornyeAPI(
         try:
             settings_file = cache_path("gui-settings.json")
             if settings_file.exists():
-                return json.loads(settings_file.read_text(encoding="utf-8"))
+                settings = json.loads(settings_file.read_text(encoding="utf-8"))
+            else:
+                settings = {}
+            if isinstance(settings, dict):
+                from .core.animated_artwork import (
+                    artwork_api_url,
+                    animated_artworks_enabled_by_default,
+                )
+
+                settings.setdefault(
+                    "save_animated_artwork",
+                    animated_artworks_enabled_by_default(),
+                )
+                settings.setdefault("animated_artwork_api_url", artwork_api_url())
+                return settings
         except Exception as e:
             self.log(f"Failed to load settings: {e}", "error")
         return {}
@@ -797,26 +811,6 @@ class MornyeAPI(
             run_sync(remove_url_from_history_async(url))
         except Exception:
             pass
-
-    def get_network_status(self):
-        async def _inner():
-            try:
-                client = AsyncHttpClient("network", timeout_s=10)
-                resp = await client.get("https://ipapi.co/json/", timeout=10)
-                data = resp.json() if resp.status_code == 200 else {}
-                return {
-                    "ip": data.get("ip", "Unavailable"),
-                    "country_name": data.get("country_name", "Unknown"),
-                    "country_code": data.get("country_code", ""),
-                }
-            except Exception:
-                return {
-                    "ip": "Unavailable",
-                    "country_name": "Unknown",
-                    "country_code": "",
-                }
-
-        return run_sync(_inner())
 
     def save_profile_data(self, name, cfg) -> bool | None:
         try:
@@ -1669,6 +1663,21 @@ class MornyeAPI(
             save_lrc = config.get("save_lrc", False)
             lrc_library_dir = config.get("lrc_library_dir") or None
             save_canvas = config.get("save_canvas", False)
+            from .core.animated_artwork import (
+                artwork_api_url,
+                animated_artworks_enabled_by_default,
+            )
+
+            save_animated_artwork = (
+                config.get(
+                    "save_animated_artwork",
+                    animated_artworks_enabled_by_default(),
+                )
+                is True
+            )
+            animated_artwork_api_url = (
+                config.get("animated_artwork_api_url") or artwork_api_url()
+            )
             canvas_library_dir = config.get("canvas_library_dir") or None
             canvas_providers = config.get("canvas_providers") or [
                 "spotify",
@@ -1867,6 +1876,8 @@ class MornyeAPI(
                 save_lrc=save_lrc,
                 lrc_library_dir=lrc_library_dir,
                 save_canvas=save_canvas,
+                save_animated_artwork=save_animated_artwork,
+                animated_artwork_api_url=animated_artwork_api_url,
                 canvas_library_dir=canvas_library_dir,
                 canvas_providers=canvas_providers,
                 enrich_metadata=enrich_metadata,
