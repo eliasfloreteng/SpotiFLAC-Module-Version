@@ -99,9 +99,7 @@ class ProviderResolver:
         configured_order = (
             {name: index for index, name in enumerate(configured)}
             if configured
-            else {
-                name: index for index, name in enumerate(self._provider_priority)
-            }
+            else {name: index for index, name in enumerate(self._provider_priority)}
         )
         if not self._profiles:
             candidates = [
