@@ -79,7 +79,9 @@ async def fetch_animated_artwork_url(
     if not _valid_api_url(base_url):
         raise AnimatedArtworkError("animated artwork API URL must be HTTP(S)")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(12.0, connect=5.0)
+        ) as client:
             response = await client.get(
                 f"{base_url}/api/v1/artwork/search",
                 params={"artist": artist, "album": album},

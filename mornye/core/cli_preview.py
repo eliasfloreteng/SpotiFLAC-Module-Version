@@ -129,9 +129,7 @@ def build_command_parts(cfg: dict) -> list[str]:
     if cfg.get("save_animated_artwork") and (
         cfg.get("animated_artwork_api_url", artwork_api_url()) != artwork_api_url()
     ):
-        parts.extend(
-            ["--animated-artwork-api-url", cfg["animated_artwork_api_url"]]
-        )
+        parts.extend(["--animated-artwork-api-url", cfg["animated_artwork_api_url"]])
     if cfg.get("canvas_library_dir"):
         parts.extend(["--canvas-dir", cfg["canvas_library_dir"]])
     # Only worth printing when it is not the default order: the flag exists

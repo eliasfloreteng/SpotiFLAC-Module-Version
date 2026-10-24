@@ -1668,10 +1668,13 @@ class MornyeAPI(
                 animated_artworks_enabled_by_default,
             )
 
-            save_animated_artwork = config.get(
-                "save_animated_artwork",
-                animated_artworks_enabled_by_default(),
-            ) is True
+            save_animated_artwork = (
+                config.get(
+                    "save_animated_artwork",
+                    animated_artworks_enabled_by_default(),
+                )
+                is True
+            )
             animated_artwork_api_url = (
                 config.get("animated_artwork_api_url") or artwork_api_url()
             )

@@ -75,7 +75,9 @@ def test_conversion_writes_webp_atomically_and_does_not_overwrite(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     destination = tmp_path / "album" / "cover.webp"
-    monkeypatch.setattr(animated_artwork.shutil, "which", lambda _name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(
+        animated_artwork.shutil, "which", lambda _name: "/usr/bin/ffmpeg"
+    )
 
     class Process:
         returncode = 0
