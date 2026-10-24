@@ -13,7 +13,7 @@ aiofiles>=23.2.1
 tenacity>=8.3.0
 python-dotenv>=1.2.2
 requests>=2.33.0
-pydoll-python>=2.19.0
+pydoll-python==2.27.0
 multidict>=6.9.1
 numpy>=1.24.0
 soundfile>=0.12.1
