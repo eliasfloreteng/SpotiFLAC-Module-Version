@@ -51,6 +51,7 @@ mornye/application/provider_resolver.py
 mornye/application/queue_service.py
 mornye/core/__init__.py
 mornye/core/acoustid_lookup.py
+mornye/core/animated_artwork.py
 mornye/core/apple_music_metadata.py
 mornye/core/apple_ttml.py
 mornye/core/atomic_io.py
@@ -122,6 +123,7 @@ mornye/core/signed_session_errors.py
 mornye/core/signed_session_mobile.py
 mornye/core/signed_session_mono.py
 mornye/core/signed_session_status.py
+mornye/core/smb_library_scan.py
 mornye/core/solver.py
 mornye/core/soundplate.py
 mornye/core/spotfetch.py
@@ -218,6 +220,7 @@ mornye/tui/csv_picker_screen.py
 mornye/tui/extensions_view.py
 mornye/tui/health_view.py
 mornye/tui/help_screen.py
+mornye/tui/library_view.py
 mornye/tui/mornye.tcss
 mornye/tui/queue_view.py
 mornye/tui/runner.py
@@ -230,6 +233,7 @@ mornye/webapi/__init__.py
 mornye/webapi/routes.py
 mornye/webapi/schemas.py
 tests/test_acoustid_lookup.py
+tests/test_animated_artwork.py
 tests/test_app_api_mixins.py
 tests/test_apple_music_metadata.py
 tests/test_architecture_foundation.py
@@ -335,6 +339,7 @@ tests/test_search_mixin.py
 tests/test_signed_session_backoff.py
 tests/test_signed_session_errors.py
 tests/test_signed_session_status.py
+tests/test_smb_library_scan.py
 tests/test_smoke.py
 tests/test_solver_grant_capture.py
 tests/test_solver_profile_cleanup.py
@@ -364,6 +369,7 @@ tests/test_tui_csv_picker.py
 tests/test_tui_extensions.py
 tests/test_tui_fixes.py
 tests/test_tui_health.py
+tests/test_tui_library.py
 tests/test_tui_look.py
 tests/test_tui_runner.py
 tests/test_tui_search.py
