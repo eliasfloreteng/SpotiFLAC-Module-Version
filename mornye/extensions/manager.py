@@ -1045,16 +1045,26 @@ class ExtensionManager:
             return False
         return installed_sha.lower() == remote.sha256.lower()
 
-    def preload_python_modules(self) -> None:
-        """Pre-loads all installed Python extension entry points into sys.modules.
+    def preload_python_modules(self, *, only: set[str] | None = None) -> None:
+        """Pre-load installed Python extension entry points into ``sys.modules``.
 
         This helps resolve intra-extension imports that expect other extension
         modules (e.g. `from .tidal import ...`) to be available under the
         canonical `mornye.extensions_plugins.<name>` package name.
+
+        ``only`` is for a caller that needs a known utility module rather than
+        every provider.  Importing a provider is allowed to do expensive setup
+        (including checking a signed session), so a read-only screen must not
+        turn one small local lookup into startup work for every extension.
         """
         pkg_name = "mornye.extensions_plugins"
         python_paths: list[str] = []
-        python_exts = [e for e in self.list_installed() if e.runtime == "python"]
+        python_exts = [
+            extension
+            for extension in self.list_installed()
+            if extension.runtime == "python"
+            and (only is None or extension.name in only)
+        ]
         for ext in python_exts:
             # We now rely directly on the parent directory of the entry point,
             # as subdirectories (like python/) are no longer generated.

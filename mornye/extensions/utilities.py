@@ -67,5 +67,9 @@ def load_module(name: str) -> ModuleType:
                 "MORNYE_REGISTRIES with a registry containing utilities.sflx, "
                 "or provide its URL through MORNYE_EXT_LINKS."
             )
-        manager.preload_python_modules()
+        # A request for ``signed_session_status`` is deliberately local: do
+        # not preload every Python provider just to inspect session files.
+        # Some providers initialise signed-session/browser machinery during
+        # import, which used to leave the TUI on a blank screen at startup.
+        manager.preload_python_modules(only={EXTENSION_ID})
         return importlib.import_module(f"mornye.extensions_plugins.{name}")
