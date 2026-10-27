@@ -68,7 +68,6 @@ from ..core.progress import (
 )
 from ..core.quality import normalize_quality, quality_for_provider
 from ..core.recording_guard import wrong_recording_reason_async
-from ..core.spotify_metadata import SpotifyMetadataClient
 from ..core.transcode import (
     DEFAULT_MP3_BITRATE,
     ensure_ffmpeg_available,
@@ -85,6 +84,7 @@ from .batch_finalizer import BatchFinalizer
 
 if TYPE_CHECKING:
     from ..core.base import BaseProvider
+    from ..core.spotify_metadata import SpotifyMetadataClient
 
 logger = logging.getLogger(__name__)
 
@@ -1818,6 +1818,8 @@ class MornyeDownloader:
 
     def _metadata_client(self) -> SpotifyMetadataClient:
         if self._client is None:
+            from ..core.spotify_metadata import SpotifyMetadataClient
+
             self._client = SpotifyMetadataClient()
         return self._client
 
