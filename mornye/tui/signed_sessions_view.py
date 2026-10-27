@@ -3,8 +3,8 @@
 A download that suddenly opens a browser to solve a challenge is a session
 that expired; one that fails with "verification paused" is a gateway that
 said no. Both used to be visible only as a line in the log. This panel reads
-the stores in `~/.mornye/signed_sessions/` through
-`core.signed_session_status` — the same call `--signed-sessions` makes — and
+the stores in `~/.mornye/signed_sessions/` through the built-in
+`signed_session_status` extension — the same call `--signed-sessions` makes — and
 shows one row per session with its countdown.
 
 Reading is local and cheap, so it loads on mount and re-reads every
