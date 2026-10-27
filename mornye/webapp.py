@@ -959,7 +959,7 @@ def create_app(token: str | None = None, multiuser: bool = False) -> FastAPI:
         ):
             return JSONResponse(
                 {
-                    "error": "SMB passwords may only be sent to this web interface "
+                    "error": "Network destination passwords may only be sent to this web interface "
                     "over HTTPS. Use the desktop app or configure TLS."
                 },
                 status_code=400,

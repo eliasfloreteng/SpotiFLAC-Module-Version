@@ -13,7 +13,7 @@ usefully. The text is unchanged by the split.
 | [Downloading from a CSV](csv.md) | Feeding it a file of tracks instead of a link: supported exports, how rows without a link are matched, and the unmatched-row report |
 | [Your library in numbers](dashboard.md) | The dashboard built from what you have actually downloaded — top artists, genres, decades, activity |
 | [Configuration](configuration.md) | Every option: naming, quality, lyrics, enrichment, transcoding, watch mode, profiles |
-| [Network Destinations](network-destinations.md) | Mounted folders, native SMB profiles, safe transfers, CLI selection and Docker modes |
+| [Network Destinations](network-destinations.md) | Mounted folders, SMB and WebDAV profiles, safe transfers, CLI selection and Docker modes |
 | [API Reference](api-reference.md) | `Mornye` and `AsyncMornye`, and the objects they return |
 | [Migration Guide](migration.md) | Moving from the former distribution, CLI, environment, and local state |
 | [Local Tagging](local-tagging.md) | Retagging an existing library, finding and resolving duplicates, MusicBrainz enrichment, download validation |

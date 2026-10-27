@@ -1,4 +1,4 @@
-"""library_view.py — Inspect a local or SMB music library from the TUI."""
+"""library_view.py — Inspect a local or network music library from the TUI."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from ..core.network_destinations import DESTINATIONS, DestinationError
 
 
 class LibraryPanel(VerticalScroll):
-    """Manage saved SMB destinations and scan their audio tags read-only."""
+    """Manage saved network destinations and scan their audio tags read-only."""
 
     BORDER_TITLE = "Library"
 
@@ -24,10 +24,10 @@ class LibraryPanel(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         yield Label(
-            "Read tags directly from a saved SMB share. The scan does not copy or change files.",
+            "Read tags directly from a saved SMB or WebDAV library. The scan does not copy or change files.",
             classes="panel-intro",
         )
-        yield Label("Saved SMB destination", classes="section-heading")
+        yield Label("Saved network destination", classes="section-heading")
         yield Select(
             [],
             prompt="Choose a destination…",
@@ -35,6 +35,11 @@ class LibraryPanel(VerticalScroll):
             id="library-smb-profile",
         )
         yield Label("Destination profile", classes="section-heading")
+        yield Select(
+            [("SMB", "smb"), ("WebDAV", "webdav")],
+            value="smb",
+            id="library-destination-type",
+        )
         yield Horizontal(
             Input(placeholder="Profile name", id="library-smb-name"),
             Input(placeholder="SMB server or IP", id="library-smb-host"),
@@ -44,6 +49,10 @@ class LibraryPanel(VerticalScroll):
             Input(placeholder="Share name", id="library-smb-share"),
             Input(placeholder="Subfolder (optional)", id="library-smb-subdirectory"),
             classes="library-fields",
+        )
+        yield Input(
+            placeholder="WebDAV collection URL (https://…)",
+            id="library-webdav-url",
         )
         yield Horizontal(
             Input(placeholder="Username (optional)", id="library-smb-username"),
@@ -67,6 +76,7 @@ class LibraryPanel(VerticalScroll):
         yield Horizontal(
             Switch(id="library-smb-encrypt"),
             Label("Require SMB3 encryption"),
+            id="library-smb-encryption",
             classes="library-encryption",
         )
         yield Horizontal(
@@ -77,12 +87,13 @@ class LibraryPanel(VerticalScroll):
         )
         yield Label("", id="library-status")
         yield Static(
-            "Choose or save an SMB destination to start a scan.",
+            "Choose or save a network destination to start a scan.",
             id="library-report",
             markup=False,
         )
 
     def on_mount(self) -> None:
+        self.query_one("#library-webdav-url", Input).display = False
         self.run_worker(self.reload_destinations(), exclusive=False)
 
     def _say(self, message: str) -> None:
@@ -92,7 +103,7 @@ class LibraryPanel(VerticalScroll):
         try:
             profiles = await asyncio.to_thread(DESTINATIONS.list)
         except Exception as exc:
-            self._say(f"Could not read SMB destinations — {exc}")
+            self._say(f"Could not read network destinations — {exc}")
             return
         if not self.is_mounted:
             return
@@ -101,7 +112,12 @@ class LibraryPanel(VerticalScroll):
         picker.set_options(
             [
                 (
-                    f"{profile['name']} — {profile['host']}/{profile['share']}",
+                    f"{profile['name']} — "
+                    + (
+                        str(profile["url"])
+                        if profile.get("type") == "webdav"
+                        else f"{profile['host']}/{profile['share']}"
+                    ),
                     profile_id,
                 )
                 for profile_id, profile in self._profiles.items()
@@ -112,16 +128,35 @@ class LibraryPanel(VerticalScroll):
         else:
             picker.clear()
         if not self._profiles:
-            self._say("No saved SMB destinations. Create a profile below.")
+            self._say("No saved network destinations. Create a profile below.")
         else:
             self._say(f"{len(self._profiles)} destination(s) available.")
 
     def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "library-destination-type":
+            is_webdav = event.value == "webdav"
+            for field in (
+                "library-smb-host",
+                "library-smb-share",
+                "library-smb-domain",
+            ):
+                self.query_one(f"#{field}", Input).display = not is_webdav
+            self.query_one("#library-webdav-url", Input).display = is_webdav
+            self.query_one("#library-smb-encryption", Horizontal).display = (
+                not is_webdav
+            )
+            return
         if event.select.id != "library-smb-profile" or not event.value:
             return
         profile = self._profiles.get(str(event.value))
         if profile is None:
             return
+        self.query_one("#library-destination-type", Select).value = profile.get(
+            "type", "smb"
+        )
+        self.query_one("#library-webdav-url", Input).value = str(
+            profile.get("url") or ""
+        )
         for field, key in (
             ("name", "name"),
             ("host", "host"),
@@ -152,19 +187,26 @@ class LibraryPanel(VerticalScroll):
 
     def _profile_data(self) -> dict[str, Any]:
         selected = self.query_one("#library-smb-profile", Select).value
-        return {
+        profile = {
             "id": str(selected) if selected else None,
+            "type": str(self.query_one("#library-destination-type", Select).value),
             "name": self.query_one("#library-smb-name", Input).value.strip(),
-            "host": self.query_one("#library-smb-host", Input).value.strip(),
-            "share": self.query_one("#library-smb-share", Input).value.strip(),
             "subdirectory": self.query_one(
                 "#library-smb-subdirectory", Input
             ).value.strip(),
             "username": self.query_one("#library-smb-username", Input).value.strip(),
-            "domain": self.query_one("#library-smb-domain", Input).value.strip(),
             "timeout": int(self.query_one("#library-smb-timeout", Input).value or "15"),
-            "encrypt": self.query_one("#library-smb-encrypt", Switch).value,
         }
+        if profile["type"] == "webdav":
+            profile["url"] = self.query_one("#library-webdav-url", Input).value.strip()
+        else:
+            profile["host"] = self.query_one("#library-smb-host", Input).value.strip()
+            profile["share"] = self.query_one("#library-smb-share", Input).value.strip()
+            profile["domain"] = self.query_one(
+                "#library-smb-domain", Input
+            ).value.strip()
+            profile["encrypt"] = self.query_one("#library-smb-encrypt", Switch).value
+        return profile
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -176,7 +218,7 @@ class LibraryPanel(VerticalScroll):
         profile_id = self.query_one("#library-smb-profile", Select).value
         profile = DESTINATIONS.get(str(profile_id or ""))
         if profile is None:
-            raise DestinationError("Save or select an SMB destination first.")
+            raise DestinationError("Save or select a network destination first.")
         password_input = self.query_one("#library-smb-password", Input)
         password = DESTINATIONS.credentials(
             profile,
@@ -208,23 +250,23 @@ class LibraryPanel(VerticalScroll):
             profile, password = await asyncio.to_thread(
                 self._saved_profile_and_password
             )
-            from ..core.network_destinations import SMBBackend
+            from ..core.network_destinations import create_backend
 
             result = await asyncio.to_thread(
-                SMBBackend(profile, profile.username, password).test_connection
+                create_backend(profile, profile.username, password).test_connection
             )
             self._say(result.get("message", "SMB connection verified."))
         except DestinationError as exc:
             self._say(str(exc))
         except Exception as exc:
-            self._say(f"SMB connection failed — {exc}")
+            self._say(f"Network destination test failed — {exc}")
         finally:
             self._set_busy(False)
 
     async def _scan(self) -> None:
         self._set_busy(True)
         report = self.query_one("#library-report", Static)
-        report.update("Connecting to SMB library…")
+        report.update("Connecting to network library…")
         try:
             profile, password = await asyncio.to_thread(
                 self._saved_profile_and_password

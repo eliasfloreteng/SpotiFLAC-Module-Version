@@ -184,15 +184,15 @@ class DownloadService:
         if request.config.output.network_destination_id:
             from mornye.core.network_destinations import (
                 DESTINATIONS,
-                SMBBackend,
+                create_backend,
                 create_staging_directory,
             )
 
             profile = DESTINATIONS.get(request.config.output.network_destination_id)
             if profile is None:
-                raise ValueError("The selected SMB destination no longer exists.")
+                raise ValueError("The selected network destination no longer exists.")
             password = DESTINATIONS.credentials(profile)
-            smb_backend = SMBBackend(profile, profile.username, password)
+            smb_backend = create_backend(profile, profile.username, password)
             await asyncio.to_thread(smb_backend.test_connection)
             smb_staging_dir = create_staging_directory()
             request.config.output.directory = smb_staging_dir
@@ -202,12 +202,12 @@ class DownloadService:
                 legacy_options = getattr(self._downloader, "_opts", None)
                 if legacy_options is None or not hasattr(legacy_options, "output_dir"):
                     raise ValueError(
-                        "This downloader cannot stage files for SMB delivery."
+                        "This downloader cannot stage files for network delivery."
                     )
                 legacy_options.output_dir = str(smb_staging_dir)
             elif self._provider_executor is not None:
                 raise ValueError(
-                    "This provider executor cannot stage files for SMB delivery."
+                    "This provider executor cannot stage files for network delivery."
                 )
 
         resolved_metadata = dict(request.prefetched or {})
@@ -440,7 +440,7 @@ class DownloadService:
                         self._event_bus.publish(
                             "download.progress",
                             {
-                                "phase": "smb-transfer",
+                                "phase": "network-transfer",
                                 "file": relative,
                                 "bytes_sent": sent,
                                 "bytes_total": total,
@@ -487,7 +487,7 @@ class DownloadService:
                         from mornye.core.network_destinations import DestinationError
 
                         raise DestinationError(
-                            "A completed file was not found in SMB staging; "
+                            "A completed file was not found in network staging; "
                             "the staged files were retained."
                         )
                     result.file_path = remote_path

@@ -521,11 +521,13 @@ def parse_args(profile_defaults: dict | None = None) -> argparse.Namespace:
         help="Exact output file path for single track downloads",
     )
     parser.add_argument(
+        "--network-destination",
         "--smb-destination",
-        default=pd.get("smb_destination", None),
+        default=pd.get("network_destination", pd.get("smb_destination", None)),
         metavar="ID",
-        help="Send completed files to a saved SMB destination. The password is "
+        help="Send completed files to a saved SMB or WebDAV destination. The password is "
         "prompted securely and is never accepted as a command-line argument.",
+        dest="smb_destination",
     )
     parser.add_argument(
         "--quality",
@@ -1744,15 +1746,15 @@ async def _run_download_async(
             )
         from .core.network_destinations import (
             DESTINATIONS,
-            SMBBackend,
+            create_backend,
             create_staging_directory,
         )
 
         profile = DESTINATIONS.get(smb_destination_id)
         if profile is None:
-            raise SystemExit("The selected SMB destination was not found.")
+            raise SystemExit("The selected network destination was not found.")
         password = DESTINATIONS.credentials(profile)
-        smb_backend = SMBBackend(profile, profile.username, password)
+        smb_backend = create_backend(profile, profile.username, password)
         smb_backend.test_connection()
         smb_staging_dir = create_staging_directory()
         output_dir = str(smb_staging_dir)
@@ -1868,14 +1870,16 @@ async def _run_download_async(
                     )
                 )
         if smb_backend is not None and smb_staging_dir is not None:
-            logger.info("Delivering completed files to the selected SMB destination.")
+            logger.info(
+                "Delivering completed files to the selected network destination."
+            )
             staged_files = sorted(
                 path for path in smb_staging_dir.rglob("*") if path.is_file()
             )
             remote_paths = smb_backend.upload_tree(
                 smb_staging_dir,
                 progress=lambda name, sent, total: logger.info(
-                    "SMB transfer %s: %d/%d bytes", name, sent, total
+                    "Network transfer %s: %d/%d bytes", name, sent, total
                 ),
             )
             remote_by_local = dict(zip(staged_files, remote_paths, strict=True))
@@ -1893,7 +1897,7 @@ async def _run_download_async(
                         from .core.network_destinations import DestinationError
 
                         raise DestinationError(
-                            "A completed file was not found in SMB staging; "
+                            "A completed file was not found in network staging; "
                             "the staged files were retained."
                         )
                     result.file_path = remote_path
@@ -1924,11 +1928,11 @@ async def _run_download_async(
             import shutil
 
             shutil.rmtree(smb_staging_dir)
-            logger.info("SMB delivery completed and verified.")
+            logger.info("Network delivery completed and verified.")
     except KeyboardInterrupt:
         if smb_staging_dir is not None and smb_staging_dir.exists():
             logger.warning(
-                "SMB transfer was interrupted; staged files remain at %s",
+                "Network transfer was interrupted; staged files remain at %s",
                 smb_staging_dir,
             )
     except Exception as e:
@@ -2786,7 +2790,7 @@ async def amain() -> None:
 
         smb_profile = DESTINATIONS.get(args.smb_destination)
         if smb_profile is None:
-            raise SystemExit("The selected SMB destination was not found.")
+            raise SystemExit("The selected network destination was not found.")
         if smb_profile.username:
             from getpass import getpass
 
@@ -2795,7 +2799,7 @@ async def amain() -> None:
             except DestinationError:
                 DESTINATIONS.set_password(
                     smb_profile.id,
-                    getpass("SMB password (session-only): "),
+                    getpass("Destination password (session-only): "),
                 )
     if args.smb_destination and args.url and not args.output_dir:
         from .core.paths import default_download_dir
@@ -2971,6 +2975,7 @@ async def amain() -> None:
 
             profile_cfg = {
                 "output_dir": args.output_dir or "./Downloads",
+                "network_destination": args.smb_destination,
                 "smb_destination": args.smb_destination,
                 "services": args.service,
                 "quality": quality,

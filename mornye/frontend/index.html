@@ -573,12 +573,12 @@
         <h1>Your library</h1>
         <div class="s-actions stats-actions">
           <div class="stats-smb-controls">
-            <select id="stats-smb-destination" aria-label="SMB library destination" title="Saved SMB library">
-              <option value="">Loading SMB destinations…</option>
+            <select id="stats-smb-destination" aria-label="Network library destination" title="Saved network library">
+              <option value="">Loading network destinations…</option>
             </select>
-            <button class="act-btn secondary" type="button" id="stats-smb-scan" onclick="scanSmbLibrary()" disabled title="Scan the selected SMB library">
+            <button class="act-btn secondary" type="button" id="stats-smb-scan" onclick="scanSmbLibrary()" disabled title="Scan the selected network library">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3z"/><circle cx="12" cy="14" r="3"/><path d="M12 12v4m-1.5-1.5h3"/></svg>
-              Scan SMB
+              Scan library
             </button>
           </div>
           <select id="stats-period" onchange="loadStats()" style="max-width:170px;">
@@ -592,7 +592,7 @@
       </div>
       <div class="s-body">
         <p class="stats-intro">
-          Browse this install’s download history or scan a saved SMB library in place. Genre,
+          Browse this install’s download history or scan a saved SMB/WebDAV library in place. Genre,
           release year and duration appear where tags are available.
         </p>
         <div id="stats-smb-status" class="stats-smb-status hidden" role="status" aria-live="polite"></div>
@@ -759,28 +759,39 @@
                 <div class="network-destination-heading">Destination</div>
                 <div class="network-destination-fields">
                   <label class="network-destination-field network-destination-field-wide" for="config-network-destination">
-                    <span>Destination for new download jobs<small>Mounted folders work as local output paths. Native SMB requires the optional smb extra.</small></span>
+                    <span>Destination for new download jobs<small>Choose a mounted folder, SMB share, or WebDAV collection.</small></span>
                     <select id="config-network-destination">
                       <option value="">Local / mounted folder</option>
                     </select>
                   </label>
                   <label class="network-destination-field" for="network-destination-profile">
-                    <span>Saved SMB destination</span>
-                    <select id="network-destination-profile" onchange="selectNetworkDestination()">
+                    <span>Saved network destination</span>
+                    <select id="network-destination-profile" onchange="selectNetworkDestination(); updateNetworkDestinationFields()">
                       <option value="">New destination…</option>
+                    </select>
+                  </label>
+                  <label class="network-destination-field" for="network-destination-type">
+                    <span>Protocol</span>
+                    <select id="network-destination-type" onchange="updateNetworkDestinationFields()">
+                      <option value="smb">SMB</option>
+                      <option value="webdav">WebDAV</option>
                     </select>
                   </label>
                   <label class="network-destination-field" for="network-destination-name">
                     <span>Profile name</span>
                     <input type="text" id="network-destination-name" maxlength="80" placeholder="Home NAS">
                   </label>
-                  <label class="network-destination-field" for="network-destination-host">
+                  <label class="network-destination-field" id="network-destination-host-field" for="network-destination-host">
                     <span>SMB server</span>
                     <input type="text" id="network-destination-host" placeholder="nas.example.net or 192.0.2.10" autocomplete="off">
                   </label>
-                  <label class="network-destination-field" for="network-destination-share">
+                  <label class="network-destination-field" id="network-destination-share-field" for="network-destination-share">
                     <span>Share name</span>
                     <input type="text" id="network-destination-share" placeholder="Music">
+                  </label>
+                  <label class="network-destination-field network-destination-field-wide hidden" id="network-destination-url-field" for="network-destination-url">
+                    <span>WebDAV collection URL<small>Use HTTPS when connecting over an untrusted network.</small></span>
+                    <input type="url" id="network-destination-url" placeholder="https://cloud.example.net/remote.php/dav/files/user" autocomplete="url">
                   </label>
                   <label class="network-destination-field network-destination-field-wide" for="network-destination-subdirectory">
                     <span>Destination subfolder<small>Relative to the share; leave blank for its root</small></span>
@@ -810,7 +821,7 @@
                       <span>seconds</span>
                     </div>
                   </label>
-                  <div class="network-destination-encryption">
+                  <div class="network-destination-encryption" id="network-destination-encryption">
                     <span id="network-destination-encrypt-label">Require SMB3 encryption<small>Use when required by the server.</small></span>
                     <label class="toggle">
                       <input type="checkbox" id="network-destination-encrypt" aria-labelledby="network-destination-encrypt-label">
