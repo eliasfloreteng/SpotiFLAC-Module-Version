@@ -1,14 +1,14 @@
 # Network Destinations
 
-Mornye supports two ways to save to an SMB share:
+Mornye supports host-mounted shares and saved SMB or WebDAV destinations:
 
 1. Point the normal output directory at a share already mounted by the
    operating system. This uses the same filesystem path as a local folder.
-2. Configure a saved SMB destination and let Mornye connect to the share using
-   the optional `smbprotocol` backend.
+2. Configure an SMB or WebDAV destination and let Mornye connect to the server
+   directly.
 
 Mornye does not mount shares, discover shares, or scan the local network.
-Configure only an SMB server and share that you are authorized to use.
+Configure only SMB shares and WebDAV collections that you are authorized to use.
 
 ## Mounted shares
 
@@ -27,25 +27,21 @@ mount. The account running Mornye must have write access. In Docker, the path
 must exist inside the container; a host mount is not automatically visible
 there. See [Docker](docker.md#network-destinations-in-docker).
 
-## Native SMB destination profiles
+## Saved SMB destination profiles
 
-Install the optional dependency:
-
-```bash
-python -m pip install 'mornye-python[smb]'
-```
-
-In **Settings → Download → Network Destinations**, enter a profile name,
-server hostname or IP, share name, and optional subfolder. The SMB extra uses
+SMB support is included in the standard Mornye installation; install it with
+`python -m pip install mornye` (no `[smb]` extra is needed). In **Settings →
+Download → Network Destinations**, choose **SMB**, then enter a profile name,
+server hostname or IP, share name, and optional subfolder. Credentials use
 the operating system's credential store when `keyring` selects a supported
 secure backend (macOS Keychain, Windows Credential Manager, or Secret
 Service). On unsupported/headless systems, credentials remain in memory for
 the current process only and must be entered again after restart. Multi-user
-web instances always keep credentials session-only and scoped to the
-signed-in account. Passwords are never written to the profile, general
-settings, job payload, or logs. Usernames are saved as profile metadata. The
-profile file lives under Mornye's data directory and is written with
-owner-only permissions where the platform supports them.
+web instances always keep credentials session-only
+and scoped to the signed-in account. Passwords are never written to the
+profile, general settings, job payload, or logs. Usernames are saved as
+profile metadata. The profile file lives under Mornye's data directory and
+is written with owner-only permissions where the platform supports them.
 
 Use **Test Connection** before selecting the profile for new download jobs.
 The test checks the share and destination directory, then creates and removes
@@ -67,7 +63,7 @@ first; the password is prompted through `getpass`, not accepted as a command
 argument:
 
 ```bash
-mornye 'https://open.spotify.com/track/…' --smb-destination 'Home NAS'
+mornye 'https://open.spotify.com/track/…' --network-destination 'Home NAS'
 ```
 
 The SMB backend uses the SMB2/SMB3 dialects supported by `smbprotocol`; it
@@ -76,8 +72,8 @@ server supports and requires it. Mornye does not disable server authentication
 checks or reduce the negotiated security level to make a connection succeed.
 
 For `--web` deployments, never send a password over plain HTTP. The web
-interface rejects requests that include SMB passwords unless the request
-scheme is HTTPS. Use TLS at the Mornye endpoint or a correctly configured
+interface rejects requests that include network destination passwords unless
+the request scheme is HTTPS. Use TLS at the Mornye endpoint or a correctly configured
 trusted reverse proxy. The desktop UI does not send credentials over the
 network. Multi-user web instances allow only admins to create or remove shared
 destination profiles; each logged-in account must test a profile with its own
@@ -89,7 +85,40 @@ is removed where possible and the local staged copy remains available for a
 manual retry. Temporary files are never promoted to their final name until
 verification succeeds.
 
+## WebDAV destination profiles
+
+WebDAV support is included in the standard installation and uses Mornye's
+existing HTTP client. In **Settings → Download → Network Destinations**,
+choose **WebDAV**, enter a profile name and collection URL, for example
+`https://cloud.example.net/remote.php/dav/files/alice`, then optionally set a
+subfolder, username, and password. Do not put credentials in the URL.
+Passwords use the OS credential store when a supported secure backend is
+available; otherwise they remain session-only. Multi-user web mode always
+keeps passwords session-only.
+
+Use **Test Connection** to check the collection and verify that Mornye can
+write, read back, and remove a temporary file. WebDAV downloads are uploaded
+to a temporary remote name, verified by size and SHA-256, then published with
+the server's `MOVE` operation. Existing files are reused only when their
+contents match; otherwise Mornye chooses a numbered filename. Interrupted
+deliveries can be retried from the retained staging ID just like SMB
+transfers.
+
+The WebDAV server must support `PROPFIND`, `MKCOL`, `PUT`, `GET`, `HEAD`,
+`MOVE`, and `DELETE` for the configured collection. Use HTTPS whenever
+credentials or music traffic cross an untrusted network; Mornye does not
+disable TLS certificate verification or follow redirects. Saved WebDAV
+profiles can also be scanned read-only from the library statistics view.
+In Docker, the container needs outbound network access to the WebDAV server.
+
 ## Docker network destinations
+
+### WebDAV from the container
+
+The published image includes WebDAV support. Create a WebDAV profile in the
+settings UI; no extra image or port mapping is needed. The container needs
+outbound HTTPS access to the configured collection. Use HTTPS rather than
+sending credentials over an untrusted network.
 
 ### Host-mounted SMB share
 
@@ -114,20 +143,17 @@ available inside the container.
 
 ### Native SMB from the container
 
-Build a small derived image with the optional SMB dependency:
+The published Mornye image includes native SMB support. Use it with the
+existing `--web` command and configure the SMB profile in the Mornye settings
+UI:
 
-```dockerfile
-FROM ghcr.io/mornyeapp/mornye-python:latest
-RUN python -m pip install --no-cache-dir 'smbprotocol>=1.15.0' 'keyring>=25.0.0'
-```
-
-Use that image with the existing `--web` command, and configure the SMB profile
-in the Mornye settings UI. The container needs outbound network access to the
+The container needs outbound network access to the
 configured server on TCP port 445 and a route/firewall rule that permits that
 connection. Do not publish port 445 from the container, hardcode NAS
 addresses, or put SMB credentials in Compose files or environment variables.
 For remote browser access, use HTTPS; the container's default `--web` listener
 is HTTP.
 
-The same profile can be used with either deployment mode. Mounting does not
-require the `smb` extra; native SMB does.
+The same profile can be used with either deployment mode. A host-mounted share
+uses the local filesystem path; native SMB connects directly to the configured
+server.

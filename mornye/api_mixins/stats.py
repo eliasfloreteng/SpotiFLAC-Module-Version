@@ -46,14 +46,14 @@ class StatsMixin:
             return {"error": str(e)}
 
     def scan_smb_library(self, profile_id: str) -> dict:
-        """Scan a saved SMB destination and push the read-only stats report."""
+        """Scan a saved network destination and push the read-only stats report."""
         from ..core.network_destinations import DESTINATIONS, DestinationError
 
         profile = DESTINATIONS.get(str(profile_id or ""))
         if profile is None:
             return {
                 "status": "error",
-                "error": "That SMB destination no longer exists.",
+                "error": "That network destination no longer exists.",
             }
         try:
             password = DESTINATIONS.credentials(
@@ -84,7 +84,7 @@ class StatsMixin:
                 progress=progress,
             )
         except Exception as exc:
-            self.log(f"[stats] SMB library scan failed: {exc}", "error")
+            self.log(f"[stats] Network library scan failed: {exc}", "error")
             self._push("app_smb_library_error", str(exc))
             return
         self._push("app_smb_library_results", report)

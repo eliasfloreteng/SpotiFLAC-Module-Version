@@ -79,6 +79,7 @@ class ProfileConfig(BaseModel):
     watch: int | None = None
     log_level: int | None = None
     output_path: str | None = None
+    network_destination: str | None = None
     smb_destination: str | None = None
     include_featuring: bool = True
     max_concurrent_downloads: int = 2

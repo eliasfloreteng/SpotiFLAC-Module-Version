@@ -1,4 +1,4 @@
-"""Saved network destinations and safe SMB file delivery.
+"""Saved network destinations and safe SMB/WebDAV file delivery.
 
 Destination profiles contain connection metadata only. Passwords are held in
 process memory for the current session and are never written to disk.
@@ -23,6 +23,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
+from urllib.parse import unquote, urlsplit
 
 from .atomic_io import write_private_json
 from .paths import data_path
@@ -63,6 +64,7 @@ class SMBProfile:
     name: str
     host: str
     share: str
+    type: str = "smb"
     subdirectory: str = ""
     username: str = ""
     domain: str = ""
@@ -70,7 +72,24 @@ class SMBProfile:
     encrypt: bool = False
 
     def public_dict(self) -> dict[str, Any]:
+        return {"type": "smb", **asdict(self)}
+
+
+@dataclass(frozen=True)
+class WebDAVProfile:
+    id: str
+    name: str
+    url: str
+    type: str = "webdav"
+    subdirectory: str = ""
+    username: str = ""
+    timeout: int = 15
+
+    def public_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+NetworkProfile = SMBProfile | WebDAVProfile
 
 
 def normalize_mounted_path(path: str, *, platform: str | None = None) -> str:
@@ -128,7 +147,10 @@ def _validate_subdirectory(value: str) -> str:
     return "/".join(path.parts)
 
 
-def validate_profile(data: dict[str, Any]) -> SMBProfile:
+def validate_profile(data: dict[str, Any]) -> NetworkProfile:
+    if data.get("type") == "webdav":
+        return validate_webdav_profile(data)
+
     name = str(data.get("name") or "").strip()
     host = str(data.get("host") or "").strip().strip("[]")
     share = str(data.get("share") or "").strip()
@@ -183,6 +205,64 @@ def validate_profile(data: dict[str, Any]) -> SMBProfile:
     )
 
 
+def validate_webdav_profile(data: dict[str, Any]) -> WebDAVProfile:
+    name = str(data.get("name") or "").strip()
+    url = str(data.get("url") or "").strip()
+    username = str(data.get("username") or "").strip()
+    if not name or len(name) > 80:
+        raise DestinationError("Destination name must be 1–80 characters.")
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise DestinationError(
+            "Enter a WebDAV URL using HTTP or HTTPS, without embedded credentials."
+        )
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise DestinationError("Enter a valid WebDAV URL and port.") from exc
+    if any(ord(character) < 32 for character in url):
+        raise DestinationError("The WebDAV URL contains invalid characters.")
+    decoded_parts = unquote(unquote(parsed.path)).split("/")
+    if any(part in {".", ".."} or "\\" in part for part in decoded_parts):
+        raise DestinationError("The WebDAV URL must stay within its server path.")
+    url = url.rstrip("/")
+    if len(username) > 256:
+        raise DestinationError("The username must be 256 characters or fewer.")
+    try:
+        timeout = int(data.get("timeout", 15))
+    except (TypeError, ValueError) as exc:
+        raise DestinationError(
+            "Connection timeout must be a number of seconds."
+        ) from exc
+    if not 1 <= timeout <= 120:
+        raise DestinationError("Connection timeout must be between 1 and 120 seconds.")
+    profile_id = str(data.get("id") or uuid.uuid4().hex)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", profile_id):
+        raise DestinationError("Invalid destination identifier.")
+    subdirectory = str(data.get("subdirectory") or "").replace("\\", "/").strip("/")
+    if any(
+        part in {"", ".", ".."} or any(ord(char) < 32 for char in part)
+        for part in subdirectory.split("/")
+        if subdirectory
+    ):
+        raise DestinationError("The WebDAV subfolder must stay within its collection.")
+    return WebDAVProfile(
+        id=profile_id,
+        name=name,
+        url=url,
+        subdirectory=subdirectory,
+        username=username,
+        timeout=timeout,
+    )
+
+
 class DestinationStore:
     """Atomic profiles with secure-keyring or session-only password storage."""
 
@@ -195,7 +275,7 @@ class DestinationStore:
     def list(self) -> builtins.list[dict[str, Any]]:
         return [profile.public_dict() for profile in self._load()]
 
-    def get(self, profile_id: str) -> SMBProfile | None:
+    def get(self, profile_id: str) -> NetworkProfile | None:
         profiles = self._load()
         return next(
             (
@@ -213,7 +293,7 @@ class DestinationStore:
         password: str | None = None,
         *,
         owner: str = "",
-    ) -> SMBProfile:
+    ) -> NetworkProfile:
         profile = validate_profile(data)
         with self._lock:
             profiles = [p for p in self._load() if p.id != profile.id]
@@ -247,7 +327,7 @@ class DestinationStore:
 
     def set_password(self, profile_id: str, password: str, *, owner: str = "") -> None:
         if self.get(profile_id) is None:
-            raise DestinationError("That SMB destination no longer exists.")
+            raise DestinationError("That network destination no longer exists.")
         self._passwords[(owner, profile_id)] = str(password)
         self._credential_storage[(owner, profile_id)] = "session-only"
 
@@ -266,7 +346,7 @@ class DestinationStore:
 
     def credentials(
         self,
-        profile: SMBProfile,
+        profile: NetworkProfile,
         password: str | None = None,
         *,
         owner: str = "",
@@ -287,7 +367,7 @@ class DestinationStore:
                 return stored_password
         if key not in self._passwords:
             raise DestinationError(
-                "Enter the SMB password for this session; passwords are not saved."
+                "Enter the destination password for this session; passwords are not saved."
             )
         return self._passwords[key]
 
@@ -309,7 +389,7 @@ class DestinationStore:
             )
         except Exception as exc:
             logger.warning(
-                "Could not save the SMB password in the OS credential store (%s); "
+                "Could not save a network destination password in the OS credential store (%s); "
                 "it will be available for this session only.",
                 type(exc).__name__,
             )
@@ -325,7 +405,7 @@ class DestinationStore:
             return keyring.get_password(_KEYRING_SERVICE, profile_id)
         except Exception as exc:
             logger.warning(
-                "Could not read the SMB password from the OS credential store (%s).",
+                "Could not read a network destination password from the OS credential store (%s).",
                 type(exc).__name__,
             )
             return None
@@ -338,11 +418,11 @@ class DestinationStore:
             keyring.delete_password(_KEYRING_SERVICE, profile_id)
         except Exception as exc:
             logger.warning(
-                "Could not remove an SMB password from the OS credential store (%s).",
+                "Could not remove a network destination password from the OS credential store (%s).",
                 type(exc).__name__,
             )
 
-    def _load(self) -> builtins.list[SMBProfile]:
+    def _load(self) -> builtins.list[NetworkProfile]:
         try:
             content = json.loads(self.path.read_text(encoding="utf-8"))
             records = content.get("destinations", [])
@@ -359,7 +439,7 @@ class DestinationStore:
                 "Saved network destinations could not be read."
             ) from exc
 
-    def _write(self, profiles: builtins.list[SMBProfile]) -> None:
+    def _write(self, profiles: builtins.list[NetworkProfile]) -> None:
         write_private_json(
             self.path,
             {"destinations": [profile.public_dict() for profile in profiles]},
@@ -390,8 +470,8 @@ class SMBBackend:
                 self._client = importlib.import_module("smbclient")
             except ImportError as exc:
                 raise DestinationError(
-                    "Native SMB support is optional. Install Mornye with "
-                    "`pip install 'mornye-python[smb]'`."
+                    "SMB support dependencies are missing from this installation. "
+                    "Reinstall Mornye with `python -m pip install --upgrade mornye`."
                 ) from exc
         return self._client
 
@@ -786,6 +866,18 @@ def _safe_remove(client: Any, path: str) -> None:
         logger.debug("Could not remove an SMB temporary file after failure.")
 
 
+def create_backend(
+    profile: NetworkProfile,
+    username: str,
+    password: str,
+) -> Any:
+    if isinstance(profile, WebDAVProfile):
+        from .webdav import WebDAVBackend
+
+        return WebDAVBackend(profile, username, password)
+    return SMBBackend(profile, username, password)
+
+
 DESTINATIONS = DestinationStore()
 
 
@@ -797,7 +889,7 @@ def _secure_keyring() -> Any | None:
         return None
     except Exception as exc:
         logger.warning(
-            "OS credential store is unavailable (%s); SMB passwords will be "
+            "OS credential store is unavailable (%s); network destination passwords will be "
             "session-only.",
             type(exc).__name__,
         )

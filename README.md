@@ -81,7 +81,7 @@ If you just want a GUI for personal use, with no code involved, the [Mobile](htt
 - **CSV input** — hand it a playlist export (Exportify, Soundiiz, a bare list of links) and it downloads what the file lists, matching rows that carry no link and reporting the ones it cannot
 - **Dashboard** — what you have actually downloaded, as numbers: top artists, genres, decades, providers, listening time, activity by weekday and streaks (`--stats`, or the Stats screen)
 - **Durable queue and download log** (SQLite): a restart no longer loses queued work
-- **SMB destinations** — use an OS-mounted share or the optional SMB2/SMB3 backend, with staged and verified remote delivery
+- **Network destinations** — use OS-mounted folders, SMB2/SMB3, or WebDAV, with staged and verified remote delivery
 - **Per-account quotas and an admin role** in `--web-multiuser`
 - **Extension health panel** — success rate, latency and last error per provider
 - **Wrong-recording guard** — a provider that answers with a karaoke take, a clean edit of an explicit track, or another artist's cover is rejected and the download falls through to the next one, instead of producing a file that carries the right tags and the wrong audio
@@ -111,7 +111,7 @@ renders it usefully. Every page below is the same text that used to be here.
 | [Downloading from a CSV](docs/guide/csv.md) | Feeding it a file of tracks instead of a link: supported exports, how rows without a link are matched, and the unmatched-row report |
 | [Your library in numbers](docs/guide/dashboard.md) | The dashboard built from what you have actually downloaded — top artists, genres, decades, activity |
 | [Configuration](docs/guide/configuration.md) | Every option: naming, quality, lyrics, enrichment, transcoding, watch mode, profiles |
-| [Network Destinations](docs/guide/network-destinations.md) | Mounted paths, native SMB profiles, safe transfers, CLI and Docker |
+| [Network Destinations](docs/guide/network-destinations.md) | Mounted paths, SMB and WebDAV profiles, safe transfers, CLI and Docker |
 | [API Reference](docs/guide/api-reference.md) | `Mornye` and `AsyncMornye`, and the objects they return |
 | [Migration Guide](docs/guide/migration.md) | Moving from the old distribution, CLI, environment, and local state |
 | [Local Tagging](docs/guide/local-tagging.md) | Retagging an existing library, MusicBrainz enrichment, download validation |

@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: mornye
-Version: 1.0.4
+Version: 1.0.5
 Summary: A Python module for metadata and user-configured music-provider extensions.
 Author: Mornye
 License: MIT
@@ -35,6 +35,8 @@ Requires-Dist: aiofiles>=23.2.1
 Requires-Dist: tenacity>=8.3.0
 Requires-Dist: python-dotenv>=1.2.2
 Requires-Dist: requests>=2.33.0
+Requires-Dist: smbprotocol>=1.15.0
+Requires-Dist: keyring>=25.0.0
 Requires-Dist: pydoll-python==2.27.0
 Requires-Dist: multidict>=6.9.1
 Requires-Dist: numpy>=1.24.0
@@ -48,12 +50,9 @@ Requires-Dist: pytest-httpx>=0.21; extra == "dev"
 Requires-Dist: httpx>=0.27; extra == "dev"
 Requires-Dist: pytest-cov>=5.0; extra == "dev"
 Requires-Dist: ruff>=0.12.0; extra == "dev"
-Requires-Dist: black>=26.3.1; extra == "dev"
+Requires-Dist: black>=26.10.1; extra == "dev"
 Requires-Dist: mypy>=1.10; extra == "dev"
 Requires-Dist: pre-commit>=3.0; extra == "dev"
-Provides-Extra: smb
-Requires-Dist: smbprotocol>=1.15.0; extra == "smb"
-Requires-Dist: keyring>=25.0.0; extra == "smb"
 Dynamic: license-file
 
 # Mornye Python
@@ -139,7 +138,7 @@ If you just want a GUI for personal use, with no code involved, the [Mobile](htt
 - **CSV input** — hand it a playlist export (Exportify, Soundiiz, a bare list of links) and it downloads what the file lists, matching rows that carry no link and reporting the ones it cannot
 - **Dashboard** — what you have actually downloaded, as numbers: top artists, genres, decades, providers, listening time, activity by weekday and streaks (`--stats`, or the Stats screen)
 - **Durable queue and download log** (SQLite): a restart no longer loses queued work
-- **SMB destinations** — use an OS-mounted share or the optional SMB2/SMB3 backend, with staged and verified remote delivery
+- **Network destinations** — use OS-mounted folders, SMB2/SMB3, or WebDAV, with staged and verified remote delivery
 - **Per-account quotas and an admin role** in `--web-multiuser`
 - **Extension health panel** — success rate, latency and last error per provider
 - **Wrong-recording guard** — a provider that answers with a karaoke take, a clean edit of an explicit track, or another artist's cover is rejected and the download falls through to the next one, instead of producing a file that carries the right tags and the wrong audio
@@ -169,7 +168,7 @@ renders it usefully. Every page below is the same text that used to be here.
 | [Downloading from a CSV](docs/guide/csv.md) | Feeding it a file of tracks instead of a link: supported exports, how rows without a link are matched, and the unmatched-row report |
 | [Your library in numbers](docs/guide/dashboard.md) | The dashboard built from what you have actually downloaded — top artists, genres, decades, activity |
 | [Configuration](docs/guide/configuration.md) | Every option: naming, quality, lyrics, enrichment, transcoding, watch mode, profiles |
-| [Network Destinations](docs/guide/network-destinations.md) | Mounted paths, native SMB profiles, safe transfers, CLI and Docker |
+| [Network Destinations](docs/guide/network-destinations.md) | Mounted paths, SMB and WebDAV profiles, safe transfers, CLI and Docker |
 | [API Reference](docs/guide/api-reference.md) | `Mornye` and `AsyncMornye`, and the objects they return |
 | [Migration Guide](docs/guide/migration.md) | Moving from the old distribution, CLI, environment, and local state |
 | [Local Tagging](docs/guide/local-tagging.md) | Retagging an existing library, MusicBrainz enrichment, download validation |

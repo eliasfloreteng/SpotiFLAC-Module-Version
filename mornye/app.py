@@ -666,15 +666,15 @@ class MornyeAPI(
         from .core.network_destinations import (
             DESTINATIONS,
             DestinationError,
-            SMBBackend,
+            create_backend,
         )
 
         profile = DESTINATIONS.get(str(profile_id))
         if profile is None:
-            return {"ok": False, "error": "That SMB destination no longer exists."}
+            return {"ok": False, "error": "That network destination no longer exists."}
         try:
             secret = DESTINATIONS.credentials(profile, password, owner=self.owner)
-            return SMBBackend(profile, profile.username, secret).test_connection()
+            return create_backend(profile, profile.username, secret).test_connection()
         except DestinationError as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -683,16 +683,16 @@ class MornyeAPI(
             DESTINATIONS,
             DestinationError,
             retained_staging_directory,
-            SMBBackend,
+            create_backend,
         )
 
         profile = DESTINATIONS.get(str(profile_id))
         if profile is None:
-            return {"ok": False, "error": "That SMB destination no longer exists."}
+            return {"ok": False, "error": "That network destination no longer exists."}
         try:
             stage = retained_staging_directory(self.owner, str(staging_id))
             password = DESTINATIONS.credentials(profile, owner=self.owner)
-            SMBBackend(profile, profile.username, password).upload_tree(stage)
+            create_backend(profile, profile.username, password).upload_tree(stage)
             shutil.rmtree(stage)
             return {"ok": True, "message": "Retained files delivered and verified."}
         except DestinationError as exc:
@@ -1612,15 +1612,17 @@ class MornyeAPI(
             if destination_id:
                 from .core.network_destinations import (
                     DESTINATIONS,
-                    SMBBackend,
+                    create_backend,
                     create_staging_directory,
                 )
 
                 profile = DESTINATIONS.get(destination_id)
                 if profile is None:
-                    raise ValueError("The selected SMB destination no longer exists.")
+                    raise ValueError(
+                        "The selected network destination no longer exists."
+                    )
                 password = DESTINATIONS.credentials(profile, owner=self.owner)
-                smb_backend = SMBBackend(profile, profile.username, password)
+                smb_backend = create_backend(profile, profile.username, password)
                 smb_backend.test_connection()
                 staging_dir = create_staging_directory(self.owner)
                 download_output_dir = str(staging_dir)
@@ -1640,7 +1642,7 @@ class MornyeAPI(
             output_path = config.get("output_path") or None
             if destination_id and output_path:
                 raise ValueError(
-                    "Exact output paths cannot be used with an SMB destination; "
+                    "Exact output paths cannot be used with a network destination; "
                     "use its subfolder and filename format."
                 )
             use_track_numbers = config.get("use_track_numbers", False)
@@ -1915,9 +1917,9 @@ class MornyeAPI(
                 )
             )
             if smb_backend is not None and staging_dir is not None:
-                self.set_progress("Delivering completed files to SMB…")
+                self.set_progress("Delivering completed files to network destination…")
                 self.log(
-                    "Uploading completed files to the selected SMB destination.",
+                    "Uploading completed files to the selected network destination.",
                     "info",
                 )
                 staged_files = sorted(
@@ -1926,7 +1928,7 @@ class MornyeAPI(
                 remote_paths = smb_backend.upload_tree(
                     staging_dir,
                     progress=lambda relative, current, total: self.set_progress(
-                        f"SMB transfer {relative}: {current}/{total} bytes"
+                        f"Network transfer {relative}: {current}/{total} bytes"
                     ),
                 )
                 remote_by_local = dict(zip(staged_files, remote_paths, strict=True))
@@ -1939,7 +1941,7 @@ class MornyeAPI(
                             from .core.network_destinations import DestinationError
 
                             raise DestinationError(
-                                "A completed file was not found in SMB staging; "
+                                "A completed file was not found in network staging; "
                                 "the staged files were retained."
                             )
                         result.file_path = remote_by_local[local_path]
@@ -1957,7 +1959,7 @@ class MornyeAPI(
                             from .core.network_destinations import DestinationError
 
                             raise DestinationError(
-                                "A completed file was not found in SMB staging; "
+                                "A completed file was not found in network staging; "
                                 "the staged files were retained."
                             )
                         result.file_path = remote_path
@@ -1989,7 +1991,7 @@ class MornyeAPI(
                         ).execute_post_action(smb_backend.root)
                     )
                 shutil.rmtree(staging_dir)
-                self.log("SMB delivery completed and verified.", "ok")
+                self.log("Network delivery completed and verified.", "ok")
             if report is not None:
                 self._push_download_stats()
 

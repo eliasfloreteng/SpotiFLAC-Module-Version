@@ -6,7 +6,9 @@ import stat
 import sys
 import threading
 import traceback
+import tomllib
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +20,32 @@ from mornye.core.network_destinations import (
     validate_profile,
     _smb_relative_parts,
 )
+from mornye.core import network_destinations
+
+
+def test_smb_dependencies_are_part_of_the_standard_install() -> None:
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )["project"]
+    dependencies = project["dependencies"]
+
+    assert any(dependency.startswith("smbprotocol>=") for dependency in dependencies)
+    assert any(dependency.startswith("keyring>=") for dependency in dependencies)
+    assert "smb" not in project.get("optional-dependencies", {})
+
+
+def test_missing_smb_module_suggests_reinstalling_the_standard_package(
+    monkeypatch,
+) -> None:
+    def missing_module(_name):
+        raise ImportError("module unavailable")
+
+    monkeypatch.setattr(network_destinations.importlib, "import_module", missing_module)
+
+    with pytest.raises(DestinationError, match="pip install --upgrade mornye"):
+        SMBBackend(_profile(), "user", "password")._smb()
 
 
 def _profile(**overrides):
