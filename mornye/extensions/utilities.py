@@ -13,7 +13,6 @@ from types import ModuleType
 
 from .manager import ExtensionManager
 
-
 EXTENSION_ID = "utilities"
 MODULES = frozenset(
     {
