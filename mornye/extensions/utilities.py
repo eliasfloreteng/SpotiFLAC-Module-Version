@@ -36,6 +36,14 @@ _load_lock = threading.RLock()
 
 def _manager_with_utilities() -> ExtensionManager:
     """Return a manager after attempting the normal registry/link install."""
+    # Avoid a registry request for every metadata lookup: a normal installed
+    # utilities package needs no network before it can be used.
+    manager = ExtensionManager(auto_install_downloads=False)
+    if manager.get_installed(EXTENSION_ID) is not None:
+        return manager
+
+    # The package is missing, so use the normal registry bootstrap first.
+    # This preserves automatic updates and registry trust verification.
     manager = ExtensionManager(auto_install_downloads=True)
     if manager.get_installed(EXTENSION_ID) is None:
         # Supports MORNYE_EXT_LINKS or ~/.mornye/extensions/extensions_links.env
