@@ -182,18 +182,7 @@ for _utility_module in _EXTERNAL_UTILITY_MODULES:
     _legacy_name = f"{__name__}.{_utility_module}"
     _proxy = _UtilityModuleProxy(_legacy_name)
     sys.modules.setdefault(_legacy_name, _proxy)
-
-
-def __getattr__(name: str):
-    if name in _EXTERNAL_UTILITY_MODULES:
-        _legacy_name = f"{__name__}.{name}"
-        module = sys.modules.get(_legacy_name)
-        if module is None:
-            module = _UtilityModuleProxy(_legacy_name)
-            sys.modules[_legacy_name] = module
-        globals()[name] = module
-        return module
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals().setdefault(_utility_module, _proxy)
 
 
 def get_soundcloud_cobalt() -> str:

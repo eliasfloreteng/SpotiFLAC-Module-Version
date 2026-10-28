@@ -14,7 +14,51 @@ suite is for.
 
 from __future__ import annotations
 
+import os
+
 import pytest
+
+
+_OPTIONAL_UTILITIES_TESTS = {
+    "test_app_api_mixins.py",
+    "test_canvas.py",
+    "test_canvas_sidecar.py",
+    "test_disc_number_from_album.py",
+    "test_extension_metadata.py",
+    "test_m4a_no_roundtrip.py",
+    "test_mono_page_fallback.py",
+    "test_parse_spotify_url_id_shape.py",
+    "test_playcount_throttle.py",
+    "test_post_download_command_gate.py",
+    "test_progress_and_csv_counters.py",
+    "test_rate_limit_logging.py",
+    "test_search_mixin.py",
+    "test_signed_session_backoff.py",
+    "test_signed_session_errors.py",
+    "test_signed_session_status.py",
+    "test_spotify_metadata_nulls.py",
+    "test_track_isrc_wiring.py",
+    "test_tui_signed_sessions.py",
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip optional utility-backed tests until the real utilities extension is
+    intentionally enabled for a run.
+
+    These tests import `mornye.core.*` modules supplied by the user-installed
+    `utilities.sflx` package. They do not belong in the default suite when the
+    project runs in its isolated-extension test mode, but they can be exercised
+    explicitly with `MORNYE_TEST_REAL_EXT_DIR=1`.
+    """
+    if os.environ.get("MORNYE_TEST_REAL_EXT_DIR") == "1":
+        return
+    skip = pytest.mark.skip(
+        reason="requires user-installed utilities extension; opt in with MORNYE_TEST_REAL_EXT_DIR=1"
+    )
+    for item in list(items):
+        if item.fspath and item.fspath.basename in _OPTIONAL_UTILITIES_TESTS:
+            item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +123,7 @@ def _isolated_download_dir(request, monkeypatch, tmp_path_factory):
 @pytest.fixture(autouse=True)
 def _isolated_extension_dir(request, monkeypatch, tmp_path_factory):
     """Keeps anything that *does* install from touching ~/.mornye."""
-    if request.node.get_closest_marker("uses_real_ext_dir"):
+    if request.node.get_closest_marker("uses_real_ext_dir") or os.environ.get("MORNYE_TEST_REAL_EXT_DIR") == "1":
         return
     monkeypatch.setenv("MORNYE_EXT_DIR", str(tmp_path_factory.mktemp("extensions")))
 
