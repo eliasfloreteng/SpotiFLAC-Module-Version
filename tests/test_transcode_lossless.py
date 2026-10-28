@@ -951,16 +951,26 @@ def test_signed_session_names_the_audio_fetch_at_info():
 
     The ticket was named at info but the request that actually fetches the
     audio was not, so at the default level a download that stalled on the
-    fetch looked identical to one that never started it.
+    fetch looked identical to one that never started it. The implementation
+    lives in the optional utilities extension rather than the host package.
     """
-    from pathlib import Path
+    import inspect
+    import os
 
-    src = (
-        Path(__file__).resolve().parent.parent
-        / "mornye"
-        / "core"
-        / "signed_session_mobile.py"
-    ).read_text(encoding="utf-8")
+    if os.environ.get("MORNYE_TEST_REAL_EXT_DIR") != "1":
+        pytest.skip(
+            "requires user-installed utilities extension; opt in with MORNYE_TEST_REAL_EXT_DIR=1"
+        )
+
+    from mornye.extensions.utilities import load_module
+
+    try:
+        src = inspect.getsource(load_module("signed_session_mobile"))
+    except RuntimeError as exc:
+        if "utilities extension is not installed" not in str(exc):
+            raise
+        pytest.skip("requires the installed utilities extension")
+
     block = src[src.index('is_ticket = "/tickets" in path') :][:1200]
     assert 'is_download = "/dl" in path' in block
     assert "Fetching audio" in block

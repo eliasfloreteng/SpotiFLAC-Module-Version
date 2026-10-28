@@ -10,6 +10,8 @@ download the right audio and quietly file it wrong.
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 
 import pytest
 
@@ -75,18 +77,18 @@ def _collection(*tracks, source="https://open.spotify.com/album/a1") -> Tracklis
     ],
 )
 def test_the_client_matches_the_domain(url, expected, monkeypatch) -> None:
-    """Which class the host picks — not whether that class can reach the net.
+    """Dispatch by provider without loading optional provider implementations."""
+    module_names = {
+        "TidalMetadataClient": "tidal_metadata",
+        "AppleMusicMetadataClient": "apple_music_metadata",
+        "SpotifyMetadataClient": "spotify_metadata",
+    }
+    module_name = module_names[expected]
+    client_type = type(expected, (), {})
+    stub_module = types.ModuleType(f"mornye.core.{module_name}")
+    setattr(stub_module, expected, client_type)
+    monkeypatch.setitem(sys.modules, stub_module.__name__, stub_module)
 
-    Constructing the real SpotifyMetadataClient opens a live session (see
-    _no_live_spotify_session above), so three HTTP calls were being made
-    here to read a class name. Neutering initialize() keeps the assertion
-    exactly as it was and takes the network out of it.
-    """
-    from mornye.core import spotfetch
-
-    monkeypatch.setattr(
-        spotfetch.SpotifyWebClient, "initialize", lambda self, force=False: None
-    )
     assert type(metadata_client_for(url)).__name__ == expected
 
 

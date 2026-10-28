@@ -25,6 +25,9 @@ class _DownloaderCompatModule(types.ModuleType):
     def __setattr__(self, name: str, value) -> None:  # type: ignore[no-untyped-def]
         setattr(_engine, name, value)
 
+    def __delattr__(self, name: str) -> None:
+        delattr(_engine, name)
+
     def __dir__(self) -> list[str]:
         return sorted(set(super().__dir__()) | set(dir(_engine)))
 

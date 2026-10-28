@@ -32,6 +32,7 @@ _OPTIONAL_UTILITIES_TESTS = {
     "test_progress_and_csv_counters.py",
     "test_rate_limit_logging.py",
     "test_search_mixin.py",
+    "test_solver_grant_capture.py",
     "test_signed_session_backoff.py",
     "test_signed_session_errors.py",
     "test_signed_session_status.py",

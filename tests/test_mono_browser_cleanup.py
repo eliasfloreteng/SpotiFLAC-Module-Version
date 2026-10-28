@@ -23,7 +23,7 @@ from typing import Any, cast
 
 from mornye.downloader import _close_shared_browser_sessions
 
-_MONO = "mornye.core.signed_session_mono"
+_MONO = "mornye.extensions_plugins.signed_session_mono"
 
 
 def _stub(on_close) -> types.ModuleType:
