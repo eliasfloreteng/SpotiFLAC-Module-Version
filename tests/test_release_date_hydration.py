@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-import mornye.downloader as downloader_mod
+from mornye.application import download_engine as downloader_mod
 from mornye.core.models import TrackMetadata
 from mornye.downloader import DownloadOptions, MornyeDownloader
 

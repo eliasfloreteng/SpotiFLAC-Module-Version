@@ -14,3 +14,14 @@ def test_compat_module_deletes_forwarded_attributes_on_restore(monkeypatch) -> N
         assert getattr(download_engine, name) is value
 
     assert not hasattr(download_engine, name)
+
+
+def test_compat_module_restores_forwarded_attributes_on_restore(monkeypatch) -> None:
+    original = download_engine.DownloadManager
+    replacement = object()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(downloader, "DownloadManager", replacement)
+        assert download_engine.DownloadManager is replacement
+
+    assert download_engine.DownloadManager is original

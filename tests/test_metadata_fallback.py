@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import mornye.downloader as downloader_module
+from mornye.application import download_engine as downloader_module
 from mornye.core.errors import ErrorKind, MornyeError
 from mornye.core.metadata_fallback import (
     fallback_extension_for,

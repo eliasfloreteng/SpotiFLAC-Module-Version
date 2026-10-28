@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-import mornye.downloader as downloader
+from mornye.application import download_engine as downloader
 import mornye.core.tracklist as tracklist_module
 import mornye.launcher as launcher_module
 from tui_harness import app_of, drives_the_ui

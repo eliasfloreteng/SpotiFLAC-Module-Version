@@ -266,10 +266,7 @@ def test_download_service_uses_legacy_downloader_for_sources(monkeypatch):
         calls["output_dir"] = self._opts.output_dir
         return DownloadResult.ok("tidal", "/music/abc123.flac", source=input_url)
 
-    monkeypatch.setattr(
-        "mornye.downloader.MornyeDownloader.run_async",
-        fake_run_async,
-    )
+    monkeypatch.setattr(download_engine.MornyeDownloader, "run_async", fake_run_async)
 
     service = DownloadService()
     request = DownloadRequest(
@@ -334,7 +331,7 @@ def test_download_service_runs_injected_post_processors(monkeypatch):
     async def fake_tagger(path, metadata):
         calls.append(("tag", path, metadata.title))
 
-    monkeypatch.setattr("mornye.downloader.MornyeDownloader.run_async", fake_run_async)
+    monkeypatch.setattr(download_engine.MornyeDownloader, "run_async", fake_run_async)
     track = TrackMetadata(
         id="track-1",
         title="Song",
@@ -363,7 +360,7 @@ def test_download_service_resolves_metadata_for_post_processors(monkeypatch):
     async def fake_tagger(path, metadata):
         calls.append(metadata.title)
 
-    monkeypatch.setattr("mornye.downloader.MornyeDownloader.run_async", fake_run_async)
+    monkeypatch.setattr(download_engine.MornyeDownloader, "run_async", fake_run_async)
     request = DownloadRequest(
         sources=["spotify:track:abc123"],
         config=MornyeConfig(),
@@ -384,7 +381,7 @@ def test_download_service_applies_retry_policy(monkeypatch):
             raise RuntimeError("temporary")
         return DownloadResult.ok("tidal", "/music/abc123.flac", source=input_url)
 
-    monkeypatch.setattr("mornye.downloader.MornyeDownloader.run_async", flaky_run)
+    monkeypatch.setattr(download_engine.MornyeDownloader, "run_async", flaky_run)
     config = MornyeConfig()
     config.download.retries = 2
     request = DownloadRequest(sources=["spotify:track:abc123"], config=config)
@@ -441,7 +438,7 @@ def test_download_service_accepts_extension_aware_provider_resolver(monkeypatch)
             "extension-provider", "/music/extension.flac", source=source
         )
 
-    monkeypatch.setattr("mornye.downloader.MornyeDownloader.run_async", fake_run)
+    monkeypatch.setattr(download_engine.MornyeDownloader, "run_async", fake_run)
     resolver = ProviderResolver([ProviderProfile("extension-provider", priority=10)])
     request = DownloadRequest(
         sources=["spotify:track:extension"],
@@ -811,7 +808,7 @@ def test_legacy_adapter_scopes_structured_options_to_selected_provider(monkeypat
             executed.append(source)
             return DownloadResult.ok("qobuz", "/music/scoped.flac", source=source)
 
-    monkeypatch.setattr("mornye.downloader.MornyeDownloader", FakeDownloader)
+    monkeypatch.setattr(download_engine, "MornyeDownloader", FakeDownloader)
     options = SimpleNamespace(services=["ext:tidal-web"])
     adapter = LegacyDownloadAdapter.from_options(options)
 
@@ -1228,7 +1225,7 @@ def test_download_service_publishes_terminal_events(monkeypatch):
     async def fake_run(self, input_url, loop_minutes=None):
         return DownloadResult.ok("tidal", "/music/events.flac", source=input_url)
 
-    monkeypatch.setattr("mornye.downloader.MornyeDownloader.run_async", fake_run)
+    monkeypatch.setattr(download_engine.MornyeDownloader, "run_async", fake_run)
     bus = EventBus()
     bus.subscribe(
         "download.completed", lambda payload: events.append(("done", payload))
@@ -1250,7 +1247,7 @@ def test_download_service_publishes_provider_events(monkeypatch):
     async def fake_run(self, input_url, loop_minutes=None):
         return DownloadResult.ok("tidal", "/music/provider.flac", source=input_url)
 
-    monkeypatch.setattr("mornye.downloader.MornyeDownloader.run_async", fake_run)
+    monkeypatch.setattr(download_engine.MornyeDownloader, "run_async", fake_run)
     bus = EventBus()
     for event_name in ("provider.started", "provider.succeeded"):
         bus.subscribe(event_name, lambda payload, name=event_name: events.append(name))

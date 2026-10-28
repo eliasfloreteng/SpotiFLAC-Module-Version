@@ -228,7 +228,7 @@ def test_an_empty_url_resolves_to_nothing_without_a_request() -> None:
 
 def test_resolving_unpacks_whatever_shape_the_provider_returns(monkeypatch) -> None:
     """Providers return 2-, 3-, or 4-tuples; all three have to work."""
-    import mornye.downloader as downloader
+    from mornye.application import download_engine as downloader
 
     shapes = {
         "two": ("Album", [_Track("a")]),
@@ -256,7 +256,7 @@ def test_resolving_unpacks_whatever_shape_the_provider_returns(monkeypatch) -> N
 
 def test_a_provider_failure_reaches_the_caller(monkeypatch) -> None:
     """Swallowing it here makes every failure look like an empty album."""
-    import mornye.downloader as downloader
+    from mornye.application import download_engine as downloader
 
     async def _boom(client, url, **kwargs):
         msg = "provider said no"
