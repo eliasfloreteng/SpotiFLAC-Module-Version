@@ -18,7 +18,6 @@ import os
 
 import pytest
 
-
 _OPTIONAL_UTILITIES_TESTS = {
     "test_app_api_mixins.py",
     "test_canvas.py",
@@ -123,7 +122,10 @@ def _isolated_download_dir(request, monkeypatch, tmp_path_factory):
 @pytest.fixture(autouse=True)
 def _isolated_extension_dir(request, monkeypatch, tmp_path_factory):
     """Keeps anything that *does* install from touching ~/.mornye."""
-    if request.node.get_closest_marker("uses_real_ext_dir") or os.environ.get("MORNYE_TEST_REAL_EXT_DIR") == "1":
+    if (
+        request.node.get_closest_marker("uses_real_ext_dir")
+        or os.environ.get("MORNYE_TEST_REAL_EXT_DIR") == "1"
+    ):
         return
     monkeypatch.setenv("MORNYE_EXT_DIR", str(tmp_path_factory.mktemp("extensions")))
 
