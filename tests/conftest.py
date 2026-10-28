@@ -41,19 +41,23 @@ _OPTIONAL_UTILITIES_TESTS = {
 }
 
 
-def pytest_ignore_collect(collection_path, config):
-    """Avoid importing optional utility-backed tests unless explicitly enabled.
+def pytest_collection_modifyitems(config, items):
+    """Skip optional utility-backed tests until the real utilities extension is
+    intentionally enabled for a run.
 
     These tests import `mornye.core.*` modules supplied by the user-installed
     `utilities.sflx` package. They do not belong in the default suite when the
-    project runs in its isolated-extension test mode. They can be exercised
-    explicitly with `MORNYE_TEST_REAL_EXT_DIR=1`. Ignore them before module
-    import; adding a skip marker after collection is too late for their imports.
+    project runs in its isolated-extension test mode, but they can be exercised
+    explicitly with `MORNYE_TEST_REAL_EXT_DIR=1`.
     """
-    return (
-        os.environ.get("MORNYE_TEST_REAL_EXT_DIR") != "1"
-        and collection_path.name in _OPTIONAL_UTILITIES_TESTS
+    if os.environ.get("MORNYE_TEST_REAL_EXT_DIR") == "1":
+        return
+    skip = pytest.mark.skip(
+        reason="requires user-installed utilities extension; opt in with MORNYE_TEST_REAL_EXT_DIR=1"
     )
+    for item in list(items):
+        if item.fspath and item.fspath.basename in _OPTIONAL_UTILITIES_TESTS:
+            item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)
