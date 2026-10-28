@@ -163,48 +163,13 @@ _EXTERNAL_UTILITY_MODULES = frozenset(
 )
 
 
-def _missing_utility_symbol(name: str, module_name: str):
-    """Return a placeholder that fails only when the optional utility is used.
-
-    A fully-real import succeeds during test collection even when the external
-    ``utilities.sflx`` package is absent, but it still raises a clear runtime
-    error the first time the caller actually touches the symbol.
-    """
-
-    class _MissingUtilityPlaceholder:
-        __module__ = module_name
-        __qualname__ = name
-
-        def __new__(cls, *args, **kwargs):
-            raise RuntimeError(
-                f"The optional utilities extension is not installed; "
-                f"'{module_name}' requires 'utilities.sflx' to be available."
-            )
-
-        def __call__(self, *args, **kwargs):
-            raise RuntimeError(
-                f"The optional utilities extension is not installed; "
-                f"'{module_name}' requires 'utilities.sflx' to be available."
-            )
-
-    _MissingUtilityPlaceholder.__name__ = name
-    _MissingUtilityPlaceholder.__qualname__ = f"{module_name}.{name}"
-    return _MissingUtilityPlaceholder
-
-
 class _UtilityModuleProxy(ModuleType):
     """Lazy legacy-module proxy that defers registry access until first use."""
 
     def __getattr__(self, attribute: str):
         from mornye.extensions.utilities import load_module
 
-        try:
-            module = load_module(self.__name__.rsplit(".", 1)[-1])
-        except RuntimeError as exc:
-            if "utilities extension is not installed" not in str(exc):
-                raise
-            return _missing_utility_symbol(attribute, self.__name__)
-
+        module = load_module(self.__name__.rsplit(".", 1)[-1])
         sys.modules[self.__name__] = module
         setattr(sys.modules[__name__], self.__name__.rsplit(".", 1)[-1], module)
         return getattr(module, attribute)
