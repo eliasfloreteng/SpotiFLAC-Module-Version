@@ -714,6 +714,13 @@
               </div>
             </div>
             <div class="s-row">
+              <span class="s-label">Notification sounds</span>
+              <label class="toggle">
+                <input type="checkbox" id="config-sound-enabled" checked onchange="onNotificationSoundChange()">
+                <span class="toggle-sl"></span>
+              </label>
+            </div>
+            <div class="s-row">
               <span class="s-label">Preview Volume<small>The 30-second clips played from the ▶ button on a track</small></span>
               <div class="volume-control">
                 <input type="range" id="config-preview-volume" min="0" max="100" step="5" value="100"
@@ -1072,7 +1079,11 @@
             </div>
             <div class="s-row">
               <span class="s-label">Animated artwork API URL<small>Leave blank to use the configured environment default</small></span>
-              <input type="url" id="config-animated-artwork-api-url" placeholder="https://artwork.m8tec.top" style="width:240px;">
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <button class="act-btn secondary" type="button" onclick="openApiConfigPopup('animated')" style="padding:5px 12px;font-size:11.5px;">Configure</button>
+                <span id="config-animated-artwork-api-display" class="api-config-pill">Not set</span>
+              </div>
+              <input type="hidden" id="config-animated-artwork-api-url">
             </div>
           </div>
         </div>

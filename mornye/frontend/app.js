@@ -267,6 +267,20 @@ function changeFont() {
   } catch (e) {}
 }
 
+function onNotificationSoundChange() {
+  const enabled = $('config-sound-enabled')?.checked ?? true;
+  try {
+    localStorage.setItem('mornye-sound-enabled', String(enabled));
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
+    stored.sound_enabled = enabled;
+    stored.notification_sound = enabled;
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(stored));
+  } catch (e) {}
+  if (window.toastMgr) window.toastMgr.setSoundEnabled(enabled);
+  isDirty = true;
+  updateSaveButtonVisual();
+}
+
 function qualityFallbackChain(q) {
   const n = (q || '').toString().toUpperCase();
   // Dolby Atmos is Tidal-exclusive (see core/quality.py's
@@ -318,6 +332,9 @@ function applySettings(settings = {}) {
     localStorage.setItem('mornye-accent', accent);
   } catch (e) {}
   if ($('config-accent')) $('config-accent').value = accent;
+  const soundEnabled = cfg.sound_enabled !== false && cfg.notification_sound !== false;
+  if ($('config-sound-enabled')) $('config-sound-enabled').checked = soundEnabled;
+  if (window.toastMgr) window.toastMgr.setSoundEnabled(soundEnabled);
   if ($('config-font')) $('config-font').value = cfg.font;
   previewVolume = Number.isFinite(Number(cfg.preview_volume)) ? Number(cfg.preview_volume) : 100;
   if ($('config-preview-volume')) $('config-preview-volume').value = previewVolume;
@@ -334,6 +351,7 @@ function applySettings(settings = {}) {
   if ($('config-animated-artwork-api-url')) {
     $('config-animated-artwork-api-url').value = cfg.animated_artwork_api_url || '';
   }
+  updateApiConfigDisplay('animated');
   if ($('config-filename')) $('config-filename').value = cfg.filename_format;
   if ($('config-track-numbers')) { $('config-track-numbers').checked = cfg.use_track_numbers; onTNChange(); }
   if ($('config-album-track-numbers')) $('config-album-track-numbers').checked = cfg.use_album_track_numbers;
@@ -354,6 +372,7 @@ function applySettings(settings = {}) {
   if ($('config-post-cmd')) $('config-post-cmd').value = cfg.post_download_command;
   if ($('config-qobuz-local-api')) $('config-qobuz-local-api').value = cfg.qobuz_local_api_url || '';
   if ($('config-tidal-api')) $('config-tidal-api').value = cfg.tidal_custom_api || '';
+  if ($('config-animated-artwork-api-url')) $('config-animated-artwork-api-url').value = cfg.animated_artwork_api_url || '';
   if ($('config-acoustid-key')) $('config-acoustid-key').value = cfg.acoustid_api_key || '';
   if ($('config-loop')) $('config-loop').value = cfg.loop;
   if ($('config-loglevel')) $('config-loglevel').value = cfg.log_level;
@@ -592,6 +611,8 @@ const SETTINGS_STORAGE_KEY = 'mornye-settings';
 const DEFAULT_SETTINGS = {
   theme: 'auto',
   accent: 'green',
+  sound_enabled: true,
+  notification_sound: true,
   preview_volume: 100,
   font: "-apple-system, BlinkMacSystemFont, Inter, 'Segoe UI', sans-serif",
   quality: 'LOSSLESS',
@@ -4188,10 +4209,13 @@ async function onFetch() {
 
 // ── Build config ──────────────────────────────────────────────────────────────
 function buildConfig() {
+  const soundEnabled = $('config-sound-enabled')?.checked ?? true;
   return {
     services:               getChecked('services-list').length ? getChecked('services-list') : ['tidal'],
     quality:                $('config-quality').value,
     allow_fallback:         $('config-fallback').checked,
+    sound_enabled:          soundEnabled,
+    notification_sound:     soundEnabled,
     lyrics:                 $('config-lyrics').checked,
     lyrics_providers:       getChecked('lyrics-list'),
     apple_lyrics_word_by_word: $('config-apple-wbw') ? $('config-apple-wbw').checked : true,
@@ -4415,13 +4439,21 @@ let apiConfigTarget = null;
 
 function openApiConfigPopup(target) {
   apiConfigTarget = target;
-  const title = target === 'qobuz' ? 'Qobuz local API' : 'Custom Tidal API';
+  const title = target === 'qobuz'
+    ? 'Qobuz local API'
+    : target === 'tidal'
+      ? 'Custom Tidal API'
+      : 'Animated artwork API';
   const description = target === 'qobuz'
     ? 'Enter your local Qobuz stream API URL and verify reachability.'
-    : 'Enter your self-hosted hifi-api instance URL and verify reachability.';
+    : target === 'tidal'
+      ? 'Enter your self-hosted hifi-api instance URL and verify reachability.'
+      : 'Enter your Apple Music animated artwork API URL and verify reachability.';
   const existingValue = target === 'qobuz'
     ? $('config-qobuz-local-api').value.trim()
-    : $('config-tidal-api').value.trim();
+    : target === 'tidal'
+      ? $('config-tidal-api').value.trim()
+      : $('config-animated-artwork-api-url').value.trim();
 
   const status = $('api-config-status');
   $('api-config-title').textContent = title;
@@ -4434,8 +4466,11 @@ function openApiConfigPopup(target) {
     if (target === 'qobuz') {
       helpLink.href = 'https://github.com/BartolomeoRusso9/qobuz-api';
       helpLink.textContent = 'How to create your own instance';
-    } else {
+    } else if (target === 'tidal') {
       helpLink.href = 'https://github.com/binimum/hifi-api';
+      helpLink.textContent = 'How to create your own instance';
+    } else {
+      helpLink.href = 'https://github.com/m8tec/apple-music-animated-artworks';
       helpLink.textContent = 'How to create your own instance';
     }
   }
@@ -4485,6 +4520,8 @@ async function checkApiConfig() {
       result = await window.pywebview.api.check_qobuz_api(url);
     } else if (apiConfigTarget === 'tidal') {
       result = await window.pywebview.api.check_tidal_api(url);
+    } else if (apiConfigTarget === 'animated') {
+      result = await window.pywebview.api.check_animated_artwork_api(url);
     }
     if (result?.ok) {
       status.textContent = 'Reachable ✓';
@@ -4523,6 +4560,8 @@ function saveApiConfig() {
     $('config-qobuz-local-api').value = value;
   } else if (apiConfigTarget === 'tidal') {
     $('config-tidal-api').value = value;
+  } else if (apiConfigTarget === 'animated') {
+    $('config-animated-artwork-api-url').value = value;
   }
   if (rawValue.trim() !== value) {
     const status = $('api-config-status');
@@ -4538,8 +4577,14 @@ function saveApiConfig() {
 function updateApiConfigDisplay(target) {
   const value = target === 'qobuz'
     ? $('config-qobuz-local-api').value.trim()
-    : $('config-tidal-api').value.trim();
-  const display = $(target === 'qobuz' ? 'config-qobuz-local-api-display' : 'config-tidal-api-display');
+    : target === 'tidal'
+      ? $('config-tidal-api').value.trim()
+      : $('config-animated-artwork-api-url').value.trim();
+  const display = target === 'qobuz'
+    ? $('config-qobuz-local-api-display')
+    : target === 'tidal'
+      ? $('config-tidal-api-display')
+      : $('config-animated-artwork-api-display');
   if (!display) return;
   display.textContent = value ? 'Configured' : 'Not set';
   display.classList.toggle('configured', !!value);
@@ -4548,6 +4593,7 @@ function updateApiConfigDisplay(target) {
 function updateAllApiConfigDisplays() {
   updateApiConfigDisplay('qobuz');
   updateApiConfigDisplay('tidal');
+  updateApiConfigDisplay('animated');
 }
 
 // ── Profiles ──────────────────────────────────────────────────────────────────
