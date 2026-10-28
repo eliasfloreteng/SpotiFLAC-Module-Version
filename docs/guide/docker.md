@@ -114,9 +114,10 @@ To put everything on paths of your own choosing, change both sides together — 
 
 In `--web-multiuser` mode each account gets its own subfolder of `MORNYE_DOWNLOAD_DIR`.
 
-For SMB shares, choose either a host-mounted volume or the optional native
-backend. The exact volume mapping, ownership requirements, and container
-network configuration are in [Network Destinations](network-destinations.md#docker-network-destinations).
+For SMB shares, choose either a host-mounted volume or the built-in native
+backend. WebDAV destinations connect directly over HTTP(S). The exact volume
+mapping, ownership requirements, and container network configuration are in
+[Network Destinations](network-destinations.md#docker-network-destinations).
 
 For CLI downloads the output folder is the second argument (`mornye URL /app/downloads`), and the variable is not involved.
 

@@ -1,16 +1,23 @@
-"""Read audio tags from a configured SMB library without copying its files."""
+"""Read audio tags from configured SMB/WebDAV libraries without copying files."""
 
 from __future__ import annotations
 
 import logging
 import ntpath
+import posixpath
 import re
 from collections import Counter
 from typing import Any, Callable
+from urllib.parse import unquote, urlsplit
 
 import mutagen
 
-from .network_destinations import SMBBackend, SMBProfile
+from .network_destinations import (
+    SMBBackend,
+    SMBProfile,
+    WebDAVProfile,
+    create_backend,
+)
 from .stats import _empty_activity, _ranked, _share, _split_names
 
 logger = logging.getLogger(__name__)
@@ -34,9 +41,7 @@ def _tag_text(tags: Any, key: str) -> str:
     return str(value or "").strip()
 
 
-def _read_remote_file(
-    backend: SMBBackend, item: dict[str, Any]
-) -> dict[str, Any] | None:
+def _read_remote_file(backend: Any, item: dict[str, Any]) -> dict[str, Any] | None:
     path = str(item["path"])
     with backend.open_audio_file(path) as remote:
         audio = mutagen.File(_NamedStream(remote, path), easy=True)
@@ -45,15 +50,20 @@ def _read_remote_file(
         tags = audio.tags or {}
         release_date = _tag_text(tags, "date") or _tag_text(tags, "originaldate")
         year_match = re.search(r"\b(18\d{2}|19\d{2}|20\d{2})\b", release_date)
+        path_parts = urlsplit(path)
+        basename = (
+            posixpath.basename(unquote(path_parts.path))
+            if path_parts.scheme in {"http", "https"}
+            else ntpath.basename(path)
+        )
         return {
-            "title": _tag_text(tags, "title")
-            or ntpath.splitext(ntpath.basename(path))[0],
+            "title": _tag_text(tags, "title") or ntpath.splitext(basename)[0],
             "artist": _tag_text(tags, "artist") or _tag_text(tags, "albumartist"),
             "album": _tag_text(tags, "album"),
             "genre": _tag_text(tags, "genre"),
             "release_year": year_match.group(1) if year_match else "",
             "duration_ms": int(max(0, float(audio.info.length or 0)) * 1000),
-            "format": ntpath.splitext(path)[1].lstrip(".").lower(),
+            "format": ntpath.splitext(basename)[1].lstrip(".").lower(),
             "bytes": int(item.get("size") or 0),
         }
 
@@ -63,6 +73,7 @@ def _build_stats(
     files: list[dict[str, Any]],
     records: list[dict[str, Any]],
     unreadable: int,
+    source: str = "smb",
 ) -> dict[str, Any]:
     tracks = len(records)
     artists: Counter = Counter()
@@ -100,10 +111,10 @@ def _build_stats(
             formats[record["format"]] += 1
 
     return {
-        "source": "smb",
+        "source": source,
         "source_name": profile_name,
         "generated_at": 0,
-        "window": {"label": "SMB library"},
+        "window": {"label": f"{source.upper()} library"},
         "scan": {"files": len(files), "readable": tracks, "unreadable": unreadable},
         "totals": {
             "tracks": tracks,
@@ -153,14 +164,18 @@ def _build_stats(
 
 
 def scan_smb_library(
-    profile: SMBProfile,
+    profile: SMBProfile | WebDAVProfile,
     username: str,
     password: str,
     *,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
-    """Read tags over SMB and return the dashboard's statistics document."""
-    backend = SMBBackend(profile, username, password)
+    """Read tags from a saved network destination and return dashboard stats."""
+    backend = (
+        SMBBackend(profile, username, password)
+        if isinstance(profile, SMBProfile)
+        else create_backend(profile, username, password)
+    )
     files = backend.list_audio_files()
     records: list[dict[str, Any]] = []
     unreadable = 0
@@ -178,4 +193,10 @@ def scan_smb_library(
             progress(index, len(files))
     if progress and not files:
         progress(0, 0)
-    return _build_stats(profile.name, files, records, unreadable)
+    return _build_stats(
+        profile.name,
+        files,
+        records,
+        unreadable,
+        source=profile.type,
+    )

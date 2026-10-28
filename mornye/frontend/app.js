@@ -4237,7 +4237,10 @@ async function loadNetworkDestinations() {
     jobSelect.replaceChildren(new Option('Local / mounted folder', ''));
     profileSelect.replaceChildren(new Option('New destination…', ''));
     for (const profile of networkDestinations) {
-      const label = `${profile.name} — ${profile.host}/${profile.share}`;
+      const target = profile.type === 'webdav'
+        ? profile.url
+        : `${profile.host}/${profile.share}`;
+      const label = `${profile.name} — ${target}`;
       jobSelect.add(new Option(label, profile.id));
       profileSelect.add(new Option(label, profile.id));
     }
@@ -4254,39 +4257,67 @@ function selectNetworkDestination() {
     item => item.id === $('network-destination-profile')?.value
   );
   if (!profile) {
+    $('network-destination-type').value = 'smb';
     for (const id of [
       'network-destination-name', 'network-destination-host',
       'network-destination-share', 'network-destination-subdirectory',
-      'network-destination-username', 'network-destination-domain'
+      'network-destination-username', 'network-destination-domain',
+      'network-destination-url'
     ]) $(id).value = '';
     $('network-destination-password').value = '';
     $('network-destination-timeout').value = '15';
     $('network-destination-encrypt').checked = false;
+    updateNetworkDestinationFields();
     return;
   }
+  $('network-destination-type').value = profile.type || 'smb';
   $('network-destination-name').value = profile.name;
-  $('network-destination-host').value = profile.host;
-  $('network-destination-share').value = profile.share;
+  $('network-destination-host').value = profile.host || '';
+  $('network-destination-share').value = profile.share || '';
+  $('network-destination-url').value = profile.url || '';
   $('network-destination-subdirectory').value = profile.subdirectory || '';
   $('network-destination-username').value = profile.username || '';
   $('network-destination-domain').value = profile.domain || '';
   $('network-destination-password').value = '';
   $('network-destination-timeout').value = profile.timeout || 15;
   $('network-destination-encrypt').checked = profile.encrypt === true;
+  updateNetworkDestinationFields();
+}
+
+function updateNetworkDestinationFields() {
+  const isWebdav = $('network-destination-type')?.value === 'webdav';
+  $('network-destination-host-field')?.classList.toggle('hidden', isWebdav);
+  $('network-destination-share-field')?.classList.toggle('hidden', isWebdav);
+  $('network-destination-url-field')?.classList.toggle('hidden', !isWebdav);
+  $('network-destination-domain')?.classList.toggle('hidden', isWebdav);
+  $('network-destination-encryption')?.classList.toggle('hidden', isWebdav);
+  const usernameLabel = $('network-destination-username')
+    ?.closest('.network-destination-field')?.querySelector('span');
+  if (usernameLabel) {
+    usernameLabel.firstChild.textContent = isWebdav
+      ? 'Username'
+      : 'Username and optional domain';
+  }
 }
 
 function networkDestinationForm() {
-  return {
+  const profile = {
     id: $('network-destination-profile').value || undefined,
+    type: $('network-destination-type').value,
     name: $('network-destination-name').value.trim(),
-    host: $('network-destination-host').value.trim(),
-    share: $('network-destination-share').value.trim(),
     subdirectory: $('network-destination-subdirectory').value.trim(),
     username: $('network-destination-username').value.trim(),
-    domain: $('network-destination-domain').value.trim(),
     timeout: Number($('network-destination-timeout').value || 15),
-    encrypt: $('network-destination-encrypt').checked,
   };
+  if (profile.type === 'webdav') {
+    profile.url = $('network-destination-url').value.trim();
+  } else {
+    profile.host = $('network-destination-host').value.trim();
+    profile.share = $('network-destination-share').value.trim();
+    profile.domain = $('network-destination-domain').value.trim();
+    profile.encrypt = $('network-destination-encrypt').checked;
+  }
+  return profile;
 }
 
 async function saveNetworkDestination() {
@@ -4322,7 +4353,8 @@ async function testNetworkDestination() {
   let id = $('network-destination-profile').value;
   if (!id) id = await saveNetworkDestination();
   if (!id) return;
-  status.textContent = 'Testing SMB connection and write permissions…';
+  const protocol = networkDestinationForm().type === 'webdav' ? 'WebDAV' : 'SMB';
+  status.textContent = `Testing ${protocol} connection and write permissions…`;
   try {
     const result = await window.pywebview.api.test_network_destination(
       id,
@@ -4331,9 +4363,9 @@ async function testNetworkDestination() {
     $('network-destination-password').value = '';
     status.textContent = result?.ok
       ? result.message
-      : (result?.error || 'SMB connection test failed.');
+      : (result?.error || `${protocol} connection test failed.`);
   } catch (error) {
-    status.textContent = error.message || 'SMB connection test failed.';
+    status.textContent = error.message || `${protocol} connection test failed.`;
   }
 }
 
@@ -4367,15 +4399,15 @@ async function retryNetworkDelivery() {
     status.textContent = 'Select the destination used by the failed transfer.';
     return;
   }
-  status.textContent = 'Retrying retained SMB transfer…';
+  status.textContent = 'Retrying retained network transfer…';
   try {
     const result = await window.pywebview.api.retry_network_delivery(id, stagingId);
     status.textContent = result?.ok
       ? result.message
-      : (result?.error || 'SMB transfer retry failed.');
+      : (result?.error || 'Network transfer retry failed.');
     if (result?.ok) $('network-destination-retry-id').value = '';
   } catch (error) {
-    status.textContent = error.message || 'SMB transfer retry failed.';
+    status.textContent = error.message || 'Network transfer retry failed.';
   }
 }
 
@@ -6832,7 +6864,7 @@ async function loadStatsSmbDestinations() {
   if (!select || !button) return;
   const previous = select.value;
   if (!window.pywebview?.api?.list_network_destinations) {
-    select.replaceChildren(new Option('SMB scan unavailable', ''));
+    select.replaceChildren(new Option('Network scan unavailable', ''));
     select.disabled = true;
     button.disabled = true;
     return;
@@ -6840,17 +6872,20 @@ async function loadStatsSmbDestinations() {
   try {
     const profiles = await window.pywebview.api.list_network_destinations();
     select.replaceChildren(new Option(
-      profiles.length ? 'Select SMB library…' : 'No saved SMB destinations',
+      profiles.length ? 'Select network library…' : 'No saved network destinations',
       '',
     ));
     for (const profile of profiles) {
-      select.add(new Option(`${profile.name} — ${profile.host}/${profile.share}`, profile.id));
+      const target = profile.type === 'webdav'
+        ? profile.url
+        : `${profile.host}/${profile.share}`;
+      select.add(new Option(`${profile.name} — ${target}`, profile.id));
     }
     select.value = profiles.some(profile => profile.id === previous) ? previous : '';
     select.disabled = profiles.length === 0 || statsSmbScanActive;
     button.disabled = profiles.length === 0 || statsSmbScanActive;
   } catch (error) {
-    select.replaceChildren(new Option('SMB destinations unavailable', ''));
+    select.replaceChildren(new Option('Network destinations unavailable', ''));
     select.disabled = true;
     button.disabled = true;
   }
@@ -6859,22 +6894,24 @@ async function loadStatsSmbDestinations() {
 async function scanSmbLibrary() {
   const profileId = $('stats-smb-destination')?.value;
   const button = $('stats-smb-scan');
+  const profile = networkDestinations.find(item => item.id === profileId);
+  const protocol = profile?.type === 'webdav' ? 'WebDAV' : 'SMB';
   if (!profileId || !button || statsSmbScanActive) return;
   if (!window.pywebview?.api?.scan_smb_library) {
-    setStatsSmbStatus('SMB scanning is unavailable in this build.', true);
+    setStatsSmbStatus('Network library scanning is unavailable in this build.', true);
     return;
   }
   statsSmbScanActive = true;
   button.disabled = true;
   button.classList.add('ta-loading');
-  setStatsSmbStatus('Connecting to SMB library…');
-  $('stats-body').innerHTML = '<div class="s-label" style="font-size:11.5px;">Scanning SMB library…</div>';
+  setStatsSmbStatus(`Connecting to ${protocol} library…`);
+  $('stats-body').innerHTML = `<div class="s-label" style="font-size:11.5px;">Scanning ${protocol} library…</div>`;
   try {
     const result = await window.pywebview.api.scan_smb_library(profileId);
-    if (result?.status === 'error') throw new Error(result.error || 'Could not start SMB scan.');
+    if (result?.status === 'error') throw new Error(result.error || 'Could not start network scan.');
   } catch (error) {
     finishSmbStatsScan();
-    setStatsSmbStatus(error.message || 'Could not start SMB scan.', true);
+    setStatsSmbStatus(error.message || 'Could not start network scan.', true);
   }
 }
 
@@ -6886,7 +6923,7 @@ function finishSmbStatsScan() {
 
 window.app_smb_library_progress = function(payload) {
   const { done = 0, total = 0 } = payload || {};
-  setStatsSmbStatus(total ? `Scanning SMB library · ${done} of ${total} files` : 'No supported audio files found.');
+  setStatsSmbStatus(total ? `Scanning network library · ${done} of ${total} files` : 'No supported audio files found.');
 };
 
 window.app_smb_library_results = function(report) {
@@ -6902,7 +6939,7 @@ window.app_smb_library_results = function(report) {
 
 window.app_smb_library_error = function(message) {
   finishSmbStatsScan();
-  setStatsSmbStatus(message || 'SMB library scan failed.', true);
+  setStatsSmbStatus(message || 'Network library scan failed.', true);
 };
 
 async function loadStats() {
@@ -6931,13 +6968,14 @@ function renderStats(doc) {
   }
 
   const totals = doc.totals || {};
-  const isSmbScan = doc.source === 'smb';
+  const isNetworkScan = ['smb', 'webdav'].includes(doc.source);
+  const sourceLabel = doc.source === 'webdav' ? 'WebDAV library' : 'SMB library';
   if (!totals.tracks) {
     const scan = doc.scan || {};
     body.innerHTML = `<div class="s-section">${emptyState(
       'chart',
-      isSmbScan ? 'No readable audio files' : 'Nothing to count yet',
-      isSmbScan
+      isNetworkScan ? 'No readable audio files' : 'Nothing to count yet',
+      isNetworkScan
         ? `${scan.files || 0} supported audio files scanned; none had readable metadata.`
         : 'This is built from the download log, which fills up as you fetch tracks. '
           + 'Come back after a download or two.',
@@ -6946,9 +6984,9 @@ function renderStats(doc) {
   }
 
   const sections = [];
-  if (isSmbScan) {
+  if (isNetworkScan) {
     const scan = doc.scan || {};
-    sections.push(`<div class="stats-source-note"><strong>SMB library</strong><span>${regEscapeHtml(doc.source_name || '')} · ${scan.files || 0} files scanned${scan.unreadable ? ` · ${scan.unreadable} unreadable` : ''}</span></div>`);
+    sections.push(`<div class="stats-source-note"><strong>${sourceLabel}</strong><span>${regEscapeHtml(doc.source_name || '')} · ${scan.files || 0} files scanned${scan.unreadable ? ` · ${scan.unreadable} unreadable` : ''}</span></div>`);
   }
 
   sections.push(`
@@ -6979,7 +7017,7 @@ function renderStats(doc) {
     'Top genres',
     statsBars((genres.entries || []).map((e) => ({ label: e.name, value: e.tracks }))),
     genres.unknown
-      ? isSmbScan
+      ? isNetworkScan
         ? `Genre tags found for ${genres.known} of ${totals.tracks} readable tracks.`
         : `Known for ${genres.known} of ${totals.tracks} tracks — a genre needs metadata enrichment to have been on when the track was downloaded.`
       : '',
@@ -6991,7 +7029,7 @@ function renderStats(doc) {
       'By decade',
       statsBars(decades.entries.map((e) => ({ label: e.name, value: e.tracks }))),
       decades.unknown
-        ? `${isSmbScan ? 'Release year tags' : 'Release year'} known for ${decades.known} of ${totals.tracks} tracks.`
+        ? `${isNetworkScan ? 'Release year tags' : 'Release year'} known for ${decades.known} of ${totals.tracks} tracks.`
         : '',
     ));
   }
@@ -6999,15 +7037,15 @@ function renderStats(doc) {
   const repeats = doc.top_tracks || [];
   if (repeats.length) {
     sections.push(statsSection(
-      isSmbScan ? 'Top tracks' : 'Fetched more than once',
+      isNetworkScan ? 'Top tracks' : 'Fetched more than once',
       statsBars(repeats.map((e) => ({ label: `${e.name} — ${e.artist}`, value: e.tracks }))),
-      isSmbScan
-        ? 'Most common track names and artists discovered in the SMB library scan.'
+      isNetworkScan
+        ? `Most common track names and artists discovered in the ${doc.source.toUpperCase()} library scan.`
         : 'A re-download after a quality upgrade, or the same song from two playlists.',
     ));
   }
 
-  if (!isSmbScan) {
+  if (!isNetworkScan) {
     sections.push(statsSection('Providers', statsBars(
       (doc.providers || []).map((e) => ({ label: e.name, value: e.tracks })),
     )));
@@ -7021,7 +7059,7 @@ function renderStats(doc) {
   }
 
   const timeline = (doc.timeline || []).slice(-12);
-  if (!isSmbScan && timeline.length) {
+  if (!isNetworkScan && timeline.length) {
     sections.push(statsSection('Last months', statsBars(
       timeline.map((e) => ({ label: e.month, value: e.tracks })),
     )));
@@ -7029,20 +7067,20 @@ function renderStats(doc) {
 
   const activity = doc.activity || {};
   const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-  if (!isSmbScan && (activity.by_weekday || []).some((n) => n)) {
+  if (!isNetworkScan && (activity.by_weekday || []).some((n) => n)) {
     sections.push(statsSection('By weekday', statsBars(
       activity.by_weekday.map((count, index) => ({ label: weekdays[index], value: count })),
     )));
   }
 
   const facts = [];
-  if (!isSmbScan && activity.busiest_day) {
+  if (!isNetworkScan && activity.busiest_day) {
     facts.push(`Busiest day: ${activity.busiest_day.date} (${activity.busiest_day.tracks} tracks)`);
   }
-  if (!isSmbScan && activity.active_days) {
+  if (!isNetworkScan && activity.active_days) {
     facts.push(`Downloaded on ${activity.active_days} day(s) · longest streak ${activity.longest_streak}`);
   }
-  if (!isSmbScan && doc.first) {
+  if (!isNetworkScan && doc.first) {
     const when = new Date((doc.first.downloaded_at || 0) * 1000).toLocaleDateString();
     facts.push(`First in this period: ${doc.first.title} — ${doc.first.artist} (${when})`);
   }
