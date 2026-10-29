@@ -228,7 +228,7 @@ def test_a_handler_is_not_asked_about_links_it_does_not_declare() -> None:
 
 
 def test_a_handler_pattern_is_matched_as_the_regex_it_is() -> None:
-    """`urlHandler.patterns` are regexes (`soundcloud\.com`), not hostnames.
+    r"""`urlHandler.patterns` are regexes (`soundcloud\.com`), not hostnames.
 
     Compared as hostnames no real pattern could ever match, so every link
     would fall through to the first candidate — which for a Deezer link is
