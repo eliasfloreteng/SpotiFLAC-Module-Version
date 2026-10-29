@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from mornye import downloader as dl
+from mornye.application import download_engine as dl
 from mornye.core.hires_check import HiResCheckResult
 from mornye.core.models import DownloadResult, TrackMetadata
 

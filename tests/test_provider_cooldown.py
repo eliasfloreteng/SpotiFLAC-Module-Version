@@ -17,7 +17,7 @@ from typing import Any, cast
 
 import pytest
 
-from mornye import downloader as dl
+from mornye.application import download_engine as dl
 from mornye.core import provider_cooldown as pc
 from mornye.core.models import DownloadResult, TrackMetadata
 from mornye.extensions.runtime import JSRuntime

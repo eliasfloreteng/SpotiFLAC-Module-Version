@@ -34,7 +34,7 @@ Two providers, tried in order:
     token as the lyrics already use. No third party and no new dependency:
     the request message is three nested fields written by hand below, and
     the response goes through the generic walker in
-    :mod:`mornye.core.spotify_protobuf`.
+    :mod:`utilities.spotify_protobuf`.
 
 ``paxsenix``
     https://github.com/Paxsenix0/Spotify-Canvas-API, a JSON wrapper around

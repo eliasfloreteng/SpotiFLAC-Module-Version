@@ -5,8 +5,10 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import threading
 import time
+from types import ModuleType
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -137,6 +139,85 @@ def get_apple_music_endpoint(key: str) -> str:
 
 def get_asian_provider_endpoint(provider: str, key: str) -> str:
     return _get_registry().get(provider, {}).get(key, "")
+
+
+# Provider-specific code moved out of core in favour of built-in extensions.
+# Keep the former module names importable during the migration, without
+# retaining duplicate source files below ``core/``.  The aliases point to the
+# canonical modules, so existing monkeypatches and module-level caches keep
+# working as before.
+_EXTERNAL_UTILITY_MODULES = frozenset(
+    {
+        "spotify_metadata",
+        "tidal_metadata",
+        "spotfetch",
+        "spotify_protobuf",
+        "spotify_totp",
+        "solver",
+        "signed_session_mobile",
+        "signed_session_desktop",
+        "signed_session_mono",
+        "signed_session_status",
+        "signed_session_errors",
+    }
+)
+
+
+def _missing_utility_symbol(name: str, module_name: str):
+    """Return a placeholder that fails only when the optional utility is used.
+
+    A fully-real import succeeds during test collection even when the external
+    ``utilities.sflx`` package is absent, but it still raises a clear runtime
+    error the first time the caller actually touches the symbol.
+    """
+
+    class _MissingUtilityPlaceholder:
+        __module__ = module_name
+        __qualname__ = name
+
+        def __new__(cls, *args, **kwargs):
+            raise RuntimeError(
+                f"The optional utilities extension is not installed; "
+                f"'{module_name}' requires 'utilities.sflx' to be available."
+            )
+
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                f"The optional utilities extension is not installed; "
+                f"'{module_name}' requires 'utilities.sflx' to be available."
+            )
+
+    _MissingUtilityPlaceholder.__name__ = name
+    _MissingUtilityPlaceholder.__qualname__ = f"{module_name}.{name}"
+    return _MissingUtilityPlaceholder
+
+
+class _UtilityModuleProxy(ModuleType):
+    """Lazy legacy-module proxy that defers registry access until first use."""
+
+    def __getattr__(self, attribute: str):
+        from mornye.extensions.utilities import load_module
+
+        try:
+            module = load_module(self.__name__.rsplit(".", 1)[-1])
+        except RuntimeError as exc:
+            if "utilities extension is not installed" not in str(exc):
+                raise
+            return _missing_utility_symbol(attribute, self.__name__)
+
+        sys.modules[self.__name__] = module
+        setattr(sys.modules[__name__], self.__name__.rsplit(".", 1)[-1], module)
+        return getattr(module, attribute)
+
+
+# ``from mornye.core.spotify_metadata import SpotifyMetadataClient`` remains
+# possible, but now resolves code supplied by utilities.sflx.  Proxies avoid
+# any network or extension-manager work merely from importing ``mornye.core``.
+for _utility_module in _EXTERNAL_UTILITY_MODULES:
+    _legacy_name = f"{__name__}.{_utility_module}"
+    _proxy = _UtilityModuleProxy(_legacy_name)
+    sys.modules.setdefault(_legacy_name, _proxy)
+    globals().setdefault(_utility_module, _proxy)
 
 
 def get_soundcloud_cobalt() -> str:

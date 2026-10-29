@@ -136,6 +136,7 @@ ALLOWED_METHODS: set[str] = {
     "delete_profile_data",
     "check_qobuz_api",
     "check_tidal_api",
+    "check_animated_artwork_api",
     "set_download_dir",
     "list_network_destinations",
     "save_network_destination",

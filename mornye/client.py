@@ -16,13 +16,13 @@ from .core.animated_artwork import (
 )
 from .core.config import DownloadReport, DownloadRequest, MornyeConfig
 from .core.http import NetworkManager
-from .core.spotify_metadata import SpotifyMetadataClient, parse_spotify_url
 from .downloader import DownloadOptions
 
 if TYPE_CHECKING:
     from types import TracebackType
 
     from .core.models import TrackMetadata
+    from .core.spotify_metadata import SpotifyMetadataClient
 
 logger = logging.getLogger("mornye")
 
@@ -339,6 +339,8 @@ class AsyncMornye:
         self._ensure_entered()
         client = self._get_metadata_client()
         if url_or_id.startswith(("http", "spotify:")):
+            from .core.spotify_metadata import parse_spotify_url
+
             info = parse_spotify_url(url_or_id)
             return await client.get_track_async(info["id"])
         return await client.get_track_async(url_or_id)
@@ -378,6 +380,8 @@ class AsyncMornye:
 
     def _get_metadata_client(self) -> SpotifyMetadataClient:
         if self._metadata_client is None:
+            from .core.spotify_metadata import SpotifyMetadataClient
+
             self._metadata_client = SpotifyMetadataClient()
         return self._metadata_client
 

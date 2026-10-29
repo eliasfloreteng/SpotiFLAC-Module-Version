@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sys
 import types
+from collections import ChainMap
 
 from .application import download_engine as _engine
 
@@ -25,9 +26,24 @@ class _DownloaderCompatModule(types.ModuleType):
     def __setattr__(self, name: str, value) -> None:  # type: ignore[no-untyped-def]
         setattr(_engine, name, value)
 
+    def __delattr__(self, name: str) -> None:
+        delattr(_engine, name)
+
     def __dir__(self) -> list[str]:
         return sorted(set(super().__dir__()) | set(dir(_engine)))
 
+    @property
+    def __dict__(self):  # type: ignore[override]
+        # Tools that undo an attribute patch (pytest >= 9's monkeypatch) look
+        # the previous value up in ``target.__dict__`` rather than with
+        # getattr().  Forwarded names live in the engine's namespace, not
+        # here, so a bare module dict made them look "absent" and the undo
+        # *deleted* the engine attribute instead of restoring it.  Reads
+        # fall through to the engine; writes go to it, like __setattr__.
+        return ChainMap(_engine.__dict__, _MODULE_DICT.__get__(self))
+
+
+_MODULE_DICT = types.ModuleType.__dict__["__dict__"]
 
 sys.modules[__name__].__class__ = _DownloaderCompatModule
 

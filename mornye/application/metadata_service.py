@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from mornye.core.config import DownloadRequest
 from mornye.core.errors import ErrorKind, InvalidUrlError, MornyeError
 from mornye.core.models import TrackMetadata
-from mornye.core.spotify_metadata import SpotifyMetadataClient
+
+if TYPE_CHECKING:
+    from mornye.core.spotify_metadata import SpotifyMetadataClient
 
 MetadataResolver = Callable[[str], Awaitable[Any]]
 
@@ -45,6 +47,8 @@ class MetadataService:
             elif self._compatibility_fallback:
                 self._resolver = self._get_chained(self._resolve_compatibility)
             else:
+                from mornye.core.spotify_metadata import SpotifyMetadataClient
+
                 self._client = SpotifyMetadataClient(timeout_s=max(1, self._timeout_s))
                 self._resolver = self._get_chained(self._client.get_url_async)
         return self._resolver

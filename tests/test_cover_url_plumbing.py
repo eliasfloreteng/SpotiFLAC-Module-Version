@@ -68,7 +68,7 @@ async def test_a_caller_that_names_no_cover_still_works():
 
 def test_the_downloader_passes_the_track_cover(monkeypatch) -> None:
     """The one call site — a cover dropped here is a cover never seen."""
-    import mornye.downloader as downloader_module
+    from mornye.application import download_engine as downloader_module
 
     seen: list[tuple] = []
 

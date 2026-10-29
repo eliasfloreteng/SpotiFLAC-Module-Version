@@ -8,6 +8,7 @@ candidate is loaded, and its failure handled, inside the fallback loop.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from typing import Any
 
@@ -16,6 +17,12 @@ import asyncio
 import pytest
 
 from mornye.core import signed_session_mono as mono
+
+if os.environ.get("MORNYE_TEST_REAL_EXT_DIR") != "1":
+    pytest.skip(
+        "requires user-installed utilities extension; opt in with MORNYE_TEST_REAL_EXT_DIR=1",
+        allow_module_level=True,
+    )
 
 PRIMARY, FALLBACK = mono.MONOCHROME_PAGE_URLS
 
