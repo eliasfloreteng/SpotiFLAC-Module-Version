@@ -225,6 +225,12 @@ def kind_for_url(url: str) -> str:
 
     try:
         url_type = parse_spotify_url(url)["type"]
+    except RuntimeError as exc:
+        # The optional utilities extension is what knows how to read a
+        # Spotify link. Say so, rather than blaming the link ("is neither").
+        if "utilities extension is not installed" in str(exc):
+            raise SubscriptionError(str(exc)) from exc
+        url_type = ""
     except Exception:
         url_type = ""
     kind = KINDS.get(url_type)

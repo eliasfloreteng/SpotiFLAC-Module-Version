@@ -15,6 +15,7 @@ suite is for.
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -31,7 +32,12 @@ _OPTIONAL_UTILITIES_TESTS = {
     "test_post_download_command_gate.py",
     "test_progress_and_csv_counters.py",
     "test_rate_limit_logging.py",
+    "test_release_date_hydration.py",
     "test_search_mixin.py",
+    "test_subscriptions.py",
+    "test_solver_profile_cleanup.py",
+    "test_solver_turnstile_locate.py",
+    "test_solver_virtual_display.py",
     "test_solver_grant_capture.py",
     "test_signed_session_backoff.py",
     "test_signed_session_errors.py",
@@ -59,6 +65,40 @@ def pytest_collection_modifyitems(config, items):
     for item in list(items):
         if item.fspath and item.fspath.basename in _OPTIONAL_UTILITIES_TESTS:
             item.add_marker(skip)
+
+
+_SPOTIFY_URL = re.compile(
+    r"^(?:https?://open\.spotify\.com/(?:intl-[a-z-]+/)?(?:user/[^/]+/)?"
+    r"|spotify:(?:user:[^:]+:)?)"
+    r"(?P<type>track|album|playlist|artist|show|episode)[/:](?P<id>[0-9A-Za-z]+)"
+)
+
+
+def _stand_in_parse_spotify_url(url: str) -> dict:
+    """A minimal `parse_spotify_url` for runs without the utilities extension.
+
+    The real one ships in `utilities.sflx`, which the isolated suite does not
+    install. Tests that merely *route* on a link's type (subscriptions, the
+    web API) were failing there because the placeholder raises, and callers
+    read that as \"not a Spotify link\". Tests of the real parser are in the
+    opt-in list above and still need the extension.
+    """
+    match = _SPOTIFY_URL.match((url or "").strip())
+    if match is None:
+        raise ValueError(f"Not a Spotify link: {url!r}")
+    return {"type": match["type"], "id": match["id"]}
+
+
+@pytest.fixture(autouse=True)
+def _spotify_url_parser_without_extension(monkeypatch):
+    """Gives link-routing tests a parser when the extension is absent."""
+    if os.environ.get("MORNYE_TEST_REAL_EXT_DIR") == "1":
+        return
+    monkeypatch.setattr(
+        "mornye.core.spotify_metadata.parse_spotify_url",
+        _stand_in_parse_spotify_url,
+        raising=False,
+    )
 
 
 @pytest.fixture(autouse=True)
