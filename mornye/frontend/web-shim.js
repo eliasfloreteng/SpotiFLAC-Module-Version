@@ -162,7 +162,7 @@
     'get_history', 'get_profiles', 'load_profile_data', 'cache_image', 'get_spotify_home_feed',
     'search_provider', 'search_provider_async', 'get_metadata_sources', 'remove_history_item',
     'save_profile_data', 'delete_profile_data', 'check_qobuz_api',
-    'check_tidal_api', 'open_config_folder', 'open_url', 'download_track_lyrics',
+    'check_tidal_api', 'check_animated_artwork_api', 'open_config_folder', 'open_url', 'download_track_lyrics',
     'download_track_cover', 'download_cover', 'download_album_cover', 'download_all_covers',
     'download_all_lyrics', 'get_track_preview', 'fetch_metadata', 'download_tracks',
     'run_health_check', 'scan_local', 'apply_local_tags', 'set_download_dir',

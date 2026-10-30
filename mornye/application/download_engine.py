@@ -68,7 +68,6 @@ from ..core.progress import (
 )
 from ..core.quality import normalize_quality, quality_for_provider
 from ..core.recording_guard import wrong_recording_reason_async
-from ..core.spotify_metadata import SpotifyMetadataClient
 from ..core.transcode import (
     DEFAULT_MP3_BITRATE,
     ensure_ffmpeg_available,
@@ -85,6 +84,7 @@ from .batch_finalizer import BatchFinalizer
 
 if TYPE_CHECKING:
     from ..core.base import BaseProvider
+    from ..core.spotify_metadata import SpotifyMetadataClient
 
 logger = logging.getLogger(__name__)
 
@@ -1496,7 +1496,7 @@ async def _close_shared_browser_sessions() -> None:
     time. Between *batches* there is nothing left to keep.
 
     It was never being closed at all, once. The session is a module-level
-    singleton in `core.signed_session_mono` rather than a provider object, so
+    singleton in the external ``utilities`` extension rather than a provider object, so
     `DownloadWorker._close_providers()` never saw it, and the only thing that
     ever shut it down was the `atexit` hook — i.e. the process exiting. The
     CLI exits after a run and got away with it; the TUI and the desktop
@@ -1519,7 +1519,7 @@ async def _close_shared_browser_sessions() -> None:
     `close_mono_browser_session()` falls back to killing by profile directory
     when the polite stop fails.
     """
-    mono = sys.modules.get("mornye.core.signed_session_mono")
+    mono = sys.modules.get("mornye.extensions_plugins.signed_session_mono")
     if mono is None:
         return
     with contextlib.suppress(Exception):
@@ -1818,6 +1818,8 @@ class MornyeDownloader:
 
     def _metadata_client(self) -> SpotifyMetadataClient:
         if self._client is None:
+            from ..core.spotify_metadata import SpotifyMetadataClient
+
             self._client = SpotifyMetadataClient()
         return self._client
 

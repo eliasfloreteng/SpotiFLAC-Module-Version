@@ -28,6 +28,15 @@ class ToastManager {
     this.recent = new Map();
   }
 
+  setSoundEnabled(enabled) {
+    this.soundEnabled = enabled !== false;
+    try {
+      localStorage.setItem('mornye-sound-enabled', String(this.soundEnabled));
+    } catch (e) {
+      // Storage can be unavailable in some environments; ignore silently.
+    }
+  }
+
   // Repeats of the same message inside this window update the existing
   // toast with an "xN" counter instead of stacking identical copies. A
   // retry loop or a per-track log line that fires twenty times is one

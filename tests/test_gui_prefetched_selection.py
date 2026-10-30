@@ -18,7 +18,7 @@ import pytest
 from mornye.app import MornyeAPI
 from mornye.core import spotfetch
 from mornye.core.models import TrackMetadata
-from mornye.downloader import DownloadOptions, MornyeDownloader
+from mornye.application.download_engine import DownloadOptions, MornyeDownloader
 from tests.application_download_capture import capture_service
 
 PLAYLIST = "https://open.spotify.com/playlist/abc"

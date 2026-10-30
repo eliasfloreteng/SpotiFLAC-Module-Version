@@ -117,6 +117,42 @@ class _Manager:
             "track",
             "4301324572",
         ),
+        (
+            "https://open.qobuz.com/track/123456789",
+            "qobuz",
+            "track",
+            "123456789",
+        ),
+        (
+            "https://play.qobuz.com/album/987654321",
+            "qobuz",
+            "album",
+            "987654321",
+        ),
+        (
+            "https://open.qobuz.com/playlist/1234567890",
+            "qobuz",
+            "playlist",
+            "1234567890",
+        ),
+        (
+            "https://tidal.com/browse/track/1000000001",
+            "tidal",
+            "track",
+            "1000000001",
+        ),
+        (
+            "https://listen.tidal.com/album/2000000002",
+            "tidal",
+            "album",
+            "2000000002",
+        ),
+        (
+            "https://www.tidal.com/browse/playlist/3000000003",
+            "tidal",
+            "playlist",
+            "3000000003",
+        ),
     ],
 )
 def test_links_are_read_per_site(url, site, kind, item_id) -> None:
@@ -192,7 +228,7 @@ def test_a_handler_is_not_asked_about_links_it_does_not_declare() -> None:
 
 
 def test_a_handler_pattern_is_matched_as_the_regex_it_is() -> None:
-    """`urlHandler.patterns` are regexes (`soundcloud\.com`), not hostnames.
+    r"""`urlHandler.patterns` are regexes (`soundcloud\.com`), not hostnames.
 
     Compared as hostnames no real pattern could ever match, so every link
     would fall through to the first candidate — which for a Deezer link is

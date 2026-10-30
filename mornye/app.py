@@ -151,7 +151,7 @@ class UILogHandler(CallbackLogHandler):
     Every record still reaches the panel; what changes with the level is
     whether it also raises a toast. INFO used to map to "info", which
     toasts — so a single album download popped one notification per
-    library log line ("[mornye.core.spotify_metadata] [DEBUG] URL
+    library log line ("[utilities.spotify_metadata] [DEBUG] URL
     type: ...", "[ExtMgr] 'x' already up-to-date", one per merged
     segment, ...) and buried the screen in what read as debug spam.
     These are diagnostics, not things the user asked to be interrupted
@@ -628,6 +628,8 @@ class MornyeAPI(
                     animated_artworks_enabled_by_default(),
                 )
                 settings.setdefault("animated_artwork_api_url", artwork_api_url())
+                settings.setdefault("sound_enabled", True)
+                settings.setdefault("notification_sound", True)
                 return settings
         except Exception as e:
             self.log(f"Failed to load settings: {e}", "error")
@@ -841,6 +843,9 @@ class MornyeAPI(
         return self._check_api_endpoint_sync(url)
 
     def check_tidal_api(self, url):
+        return self._check_api_endpoint_sync(url)
+
+    def check_animated_artwork_api(self, url):
         return self._check_api_endpoint_sync(url)
 
     def _check_api_endpoint_sync(self, url):
