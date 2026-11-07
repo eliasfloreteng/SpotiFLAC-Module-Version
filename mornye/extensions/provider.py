@@ -188,6 +188,30 @@ class JSExtensionProvider(BaseProvider):
         event = self._stop_event
         return event is not None and event.is_set()
 
+    # ─────────────────────── quality ──────────────────────────
+
+    @property
+    def quality_options(self) -> list[dict]:
+        """The ``qualityOptions`` this extension's manifest declares."""
+        from .quality_options import quality_options
+
+        manifest = getattr(getattr(self, "_ext", None), "manifest", None) or {}
+        return quality_options(manifest)
+
+    def select_quality(self, requested: Any, override: str | None = None) -> Any:
+        """The declared quality id for a Mornye tier, token or user pick.
+
+        See ``quality_options.pick_quality_option``. With no declared
+        options the request passes through unchanged.
+        """
+        from .quality_options import pick_quality_option
+
+        return pick_quality_option(
+            self.quality_options,
+            None if requested is None else str(requested),
+            override,
+        )
+
     # ─────────────────────── helpers ──────────────────────────
 
     def _load_extension(self, ext_id: str) -> InstalledExtension:
@@ -461,6 +485,150 @@ class JSExtensionProvider(BaseProvider):
     def handle_url(self, url: str) -> dict:
         return self._call("handleUrl", url) or {}
 
+    @staticmethod
+    def _url_metadata_cover(item: dict) -> str:
+        images = item.get("images")
+        image: Any
+        if isinstance(images, str):
+            image = images
+        elif isinstance(images, list) and images:
+            first = images[0]
+            image = (
+                first.get("url") or first.get("uri")
+                if isinstance(first, dict)
+                else first
+            )
+        else:
+            image = ""
+        return str(item.get("cover_url") or image or "")
+
+    @classmethod
+    def _url_metadata_track(
+        cls,
+        item: dict,
+        *,
+        collection: dict | None = None,
+        position: int = 0,
+        from_album: bool = False,
+    ) -> TrackMetadata:
+        if not isinstance(item, dict):
+            raise MornyeError(
+                ErrorKind.METADATA_ERROR,
+                "Extension returned a non-object track",
+            )
+        track_id = str(item.get("id") or "").strip()
+        title = str(item.get("name") or item.get("title") or "").strip()
+        if not track_id or not title:
+            raise MornyeError(
+                ErrorKind.METADATA_ERROR,
+                "Extension returned a track without an id or title",
+            )
+
+        collection = collection or {}
+        artists = (
+            item.get("artists") or item.get("artist") or collection.get("artists") or ""
+        )
+        album = item.get("album_name") or ""
+        if from_album:
+            album = album or collection.get("name") or ""
+        total_tracks = len(collection.get("tracks") or []) if from_album else 0
+        album_artist = item.get("album_artist") or (
+            collection.get("artists") if from_album else ""
+        )
+        return TrackMetadata(
+            id=track_id,
+            title=title,
+            artists=artists,
+            album=album,
+            album_artist=album_artist or artists,
+            isrc=str(item.get("isrc") or "").strip().upper(),
+            track_number=item.get("track_number") or (position if from_album else 0),
+            disc_number=item.get("disc_number") or 1,
+            total_tracks=item.get("total_tracks") or total_tracks,
+            total_discs=item.get("total_discs") or 1,
+            duration_ms=item.get("duration_ms") or 0,
+            release_date=str(item.get("release_date") or ""),
+            cover_url=cls._url_metadata_cover(item)
+            or cls._url_metadata_cover(collection),
+            external_url=str(
+                item.get("external_urls") or item.get("external_url") or ""
+            ),
+            copyright=str(item.get("copyright") or ""),
+            publisher=str(item.get("label") or item.get("publisher") or ""),
+            composer=str(item.get("composer") or ""),
+            genre=str(item.get("genre") or ""),
+            is_explicit=bool(item.get("explicit")),
+            preview_url=str(item.get("preview_url") or ""),
+            album_id=str(
+                item.get("album_id")
+                or (collection.get("id") if from_album else "")
+                or ""
+            ),
+            album_url=str(item.get("album_url") or ""),
+            artist_id=str(item.get("artist_id") or ""),
+            artist_url=str(item.get("artist_url") or ""),
+        )
+
+    def get_url(self, url: str, **_: Any) -> tuple[str, list[TrackMetadata], str]:
+        """Adapt an extension's handleUrl result to the metadata client contract."""
+        response = self.handle_url(url)
+        if not isinstance(response, dict) or response.get("success") is False:
+            reason = response.get("error") if isinstance(response, dict) else ""
+            raise MornyeError(
+                ErrorKind.TRACK_NOT_FOUND,
+                str(reason or "Extension could not resolve the URL"),
+                self.name,
+            )
+
+        kind = str(response.get("type") or "")
+        if kind == "track":
+            item = response.get("track")
+            if not isinstance(item, dict):
+                raise MornyeError(
+                    ErrorKind.METADATA_ERROR,
+                    "Extension returned no track metadata",
+                    self.name,
+                )
+            track = self._url_metadata_track(item)
+            return track.title, [track], track.cover_url
+
+        collection = (
+            response.get(kind) if kind in {"album", "playlist", "artist"} else None
+        )
+        if not isinstance(collection, dict):
+            raise MornyeError(
+                ErrorKind.METADATA_ERROR,
+                f"Extension returned unsupported URL metadata: {kind or 'unknown'}",
+                self.name,
+            )
+        raw_tracks = (
+            collection.get("top_tracks")
+            if kind == "artist"
+            else collection.get("tracks")
+        )
+        if not isinstance(raw_tracks, list):
+            raise MornyeError(
+                ErrorKind.METADATA_ERROR,
+                "Extension returned no collection tracks",
+                self.name,
+            )
+        tracks = [
+            self._url_metadata_track(
+                item,
+                collection=collection,
+                position=position,
+                from_album=kind == "album",
+            )
+            for position, item in enumerate(raw_tracks, start=1)
+        ]
+        collection_name = str(
+            collection.get("name") or collection.get("title") or "Unknown"
+        )
+        collection_cover = self._url_metadata_cover(collection) or (
+            tracks[0].cover_url if tracks else ""
+        )
+        return collection_name, tracks, collection_cover
+
     def get_track(self, track_id: str) -> dict:
         return self._call("getTrack", track_id) or {}
 
@@ -512,24 +680,10 @@ class JSExtensionProvider(BaseProvider):
                 filename_format = filename_format(metadata)
             # Native provider tokens are not necessarily extension tokens:
             # Qobuz's JS extension treats an unrecognised "27" as CD quality.
-            # Prefer the canonical spelling only when its manifest declares it.
-            manifest = getattr(getattr(self, "_ext", None), "manifest", None) or {}
-            quality_ids = {
-                option.get("id")
-                for option in manifest.get("qualityOptions", [])
-                if isinstance(option, dict)
-            }
-            canonical_quality = {
-                "27": "HI_RES_LOSSLESS",
-                "7": "HI_RES",
-                "6": "LOSSLESS",
-            }.get(str(quality))
-            if (
-                canonical_quality is not None
-                and quality not in quality_ids
-                and canonical_quality in quality_ids
-            ):
-                quality = canonical_quality
+            # Always hand the extension one of the ids its manifest declares.
+            quality = self.select_quality(
+                quality, kwargs.pop("extension_quality", None)
+            )
             return await self._do_download_async(
                 metadata,
                 output_dir,
