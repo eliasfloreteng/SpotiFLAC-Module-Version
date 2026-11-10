@@ -45,11 +45,20 @@ from ..core.errors import ErrorKind, MornyeError
 from ..core.hooks import Hook, load_hooks, run_hooks
 from ..core.http import AsyncHttpClient
 from ..core.isrc_helper import IsrcHelper
-from ..core.models import DownloadResult, TrackMetadata, build_filename, sanitize
+from ..core.models import (
+    DownloadResult,
+    TrackMetadata,
+    build_filename,
+    fit_name_bytes,
+    safe_dir_name,
+    sanitize,
+)
 from ..core.playlist_sync import (
+    M3U_FORMATS,
     AudioIndex,
     PlaylistSource,
     SyncPlan,
+    append_m3u,
     build_plan,
     entry_for,
     find_existing_track,
@@ -251,6 +260,11 @@ class DownloadOptions:
     transcode_to: str | None = None
     transcode_bitrate: str = DEFAULT_MP3_BITRATE
     transcode_keep_original: bool = False
+    # Caps for the converted file (0 = none): a source above them is brought
+    # down — sample rate within its 44.1k/48k family, bit depth with
+    # dither — even when it is already in the target format.
+    transcode_max_sample_rate: int = 0
+    transcode_max_bit_depth: int = 0
 
     track_max_retries: int = 0
     post_download_action: str = "none"
@@ -298,6 +312,18 @@ class DownloadOptions:
     # (-q HI_RES / HI_RES_LOSSLESS): asking for LOSSLESS and getting
     # standard-definition audio is not a fake, it is the request.
     redownload_fake_hires: bool = False
+
+    # Playlist file written next to a playlist download ("m3u8", "m3u", or
+    # "none"). A whole-playlist run rewrites it in playlist order; a run of
+    # loose tracks that belong to a playlist folder (a followed playlist's
+    # new tracks, see `library_dir`) appends to it. Issue #267.
+    m3u_format: str = "m3u8"
+
+    # The library root when `output_dir` is one playlist's subfolder inside
+    # it. Loose tracks are then looked up across the whole library first: a
+    # track another playlist already downloaded is linked from this one's
+    # M3U instead of being downloaded a second time (issue #267).
+    library_dir: str | None = None
     save_animated_artwork: bool = field(
         default_factory=animated_artworks_enabled_by_default,
     )
@@ -309,6 +335,16 @@ class DownloadOptions:
         # through a download batch.
         self.transcode_to = normalize_transcode_format(self.transcode_to)
         self.transcode_bitrate = normalize_bitrate(self.transcode_bitrate)
+        self.transcode_max_sample_rate = max(
+            0, int(self.transcode_max_sample_rate or 0)
+        )
+        self.transcode_max_bit_depth = max(0, int(self.transcode_max_bit_depth or 0))
+        if self.transcode_max_bit_depth and self.transcode_max_bit_depth not in (
+            16,
+            24,
+        ):
+            msg = "transcode_max_bit_depth must be 16 or 24"
+            raise ValueError(msg)
         # Replacing a fake Hi-Res file means first knowing it is one, so
         # asking for the replacement is asking for the check. Resolved here
         # rather than at each entry point (CLI, profile, TUI, API) so no
@@ -540,6 +576,67 @@ def _schedule_hires_check(opts: DownloadOptions, result: DownloadResult) -> None
 
     _hires_check_tasks.add(task)
     task.add_done_callback(_hires_check_tasks.discard)
+
+
+class _TransferActivity:
+    """Wraps a provider progress callback and remembers when bytes last moved.
+
+    `timeout_s` used to be a wall-clock limit on the whole provider attempt,
+    transfer included: a large Hi-Res file on a slow line was cancelled while
+    data was still arriving, and the fallback then started the next provider
+    from zero. This lets `_await_with_stall_timeout` tell a stalled attempt
+    from one that is merely slow. Called from the event loop or from the JS
+    runtime's reader thread; a float assignment is safe from either.
+    """
+
+    def __init__(self, cb: Any) -> None:
+        self._cb = cb
+        self._last_bytes = -1
+        self.last_activity: float | None = None
+
+    def __call__(self, written: int, total: int) -> Any:
+        try:
+            current = int(written or 0)
+        except (TypeError, ValueError):
+            current = 0
+        if current != self._last_bytes:
+            self._last_bytes = current
+            self.last_activity = time.monotonic()
+        return self._cb(written, total)
+
+
+async def _await_with_stall_timeout(
+    awaitable: Any,
+    timeout_s: float,
+    activity: _TransferActivity | None,
+    *,
+    poll_s: float = 0.5,
+) -> Any:
+    """Awaits a provider attempt, bounding stalls rather than total time.
+
+    Until the first byte arrives the attempt has `timeout_s` to resolve its
+    stream (ticket, manifest, signed URL). Once data is flowing, it is
+    cancelled only after `timeout_s` with no progress at all. Raises
+    `asyncio.TimeoutError` like `asyncio.wait_for`, so callers keep their
+    existing handling.
+    """
+    task = asyncio.ensure_future(awaitable)
+    started = time.monotonic()
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=min(poll_s, timeout_s))
+            if done:
+                return task.result()
+            last = activity.last_activity if activity is not None else None
+            reference = started if last is None else max(last, started)
+            if time.monotonic() - reference >= timeout_s:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+                raise asyncio.TimeoutError
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
 
 
 async def _await_pending_hires_checks(timeout_s: float = 30.0) -> None:
@@ -794,7 +891,7 @@ async def _write_animated_artwork_sidecar_async(
 
     audio = Path(result.file_path)
     artist = metadata.first_artist if opts.first_artist_only else metadata.artists
-    stem = f"{sanitize(artist)} - {sanitize(metadata.title)}"
+    stem = fit_name_bytes(f"{sanitize(artist)} - {sanitize(metadata.title)}")
 
     def _destinations(suffix: str) -> list[Path]:
         out: list[Path] = []
@@ -1111,8 +1208,10 @@ async def _download_one_pass_async(
                 metadata.artists,
                 metadata.title,
             )
-            cb = ProgressCallback(item_id=metadata.id, track_name=metadata.title)
-            provider.set_progress_callback(cb)
+            transfer_activity = _TransferActivity(
+                ProgressCallback(item_id=metadata.id, track_name=metadata.title),
+            )
+            provider.set_progress_callback(transfer_activity)
             # Per-provider, not per-track: `started_at` above covers the whole
             # track including every provider that failed before this one, and
             # attributing that to whichever provider happened to succeed last
@@ -1130,7 +1229,8 @@ async def _download_one_pass_async(
                 # The timeout applies to each provider attempt. A JS provider
                 # may spend time obtaining a ticket before the audio transfer
                 # starts, and that startup time must not consume another
-                # provider's timeout budget.
+                # provider's timeout budget. Once bytes flow it bounds stalls,
+                # not total duration — see _await_with_stall_timeout.
 
                 # Check if provider supports artist_separator parameter
                 download_kwargs = {
@@ -1181,9 +1281,10 @@ async def _download_one_pass_async(
                 )
 
                 if opts.timeout_s:
-                    result = await asyncio.wait_for(
+                    result = await _await_with_stall_timeout(
                         download_task,
-                        timeout=opts.timeout_s,
+                        opts.timeout_s,
+                        transfer_activity,
                     )
                 else:
                     result = await download_task
@@ -1238,9 +1339,11 @@ async def _download_one_pass_async(
                                     **fallback_kwargs,
                                 )
                                 if opts.timeout_s:
-                                    result = await asyncio.wait_for(
+                                    transfer_activity.last_activity = None
+                                    result = await _await_with_stall_timeout(
                                         fallback_task,
-                                        timeout=opts.timeout_s,
+                                        opts.timeout_s,
+                                        transfer_activity,
                                     )
                                 else:
                                     result = await fallback_task
@@ -1712,6 +1815,7 @@ class LegacyDownloadWorker:
         self._completed: dict[str, str] = {}
         self._results: dict[str, DownloadResult] = {}
         self._providers: list[BaseProvider] = self._build_providers()
+        self._base_out: str | None = None
 
     @property
     def completed_paths(self) -> dict[str, str]:
@@ -1727,6 +1831,11 @@ class LegacyDownloadWorker:
     def results(self) -> dict[str, DownloadResult]:
         """Return the typed result for every track processed by this worker."""
         return dict(self._results)
+
+    @property
+    def output_dir(self) -> str | None:
+        """The folder this run wrote into (the playlist subfolder, if any)."""
+        return self._base_out
 
     def _build_providers(self) -> list[BaseProvider]:
         result = []
@@ -1769,6 +1878,7 @@ class LegacyDownloadWorker:
 
             # Native async folder I/O delegation
             base_out = await self._resolve_output_dir_async()
+            self._base_out = base_out
 
             print_run_header(
                 total,
@@ -1921,8 +2031,7 @@ class LegacyDownloadWorker:
                 and self._collection_name
                 and not self._opts.use_album_subfolders
             ):
-                safe_name = re.sub(r'[<>:"/\\|?*]', "_", self._collection_name.strip())
-                out = os.path.join(out, safe_name)
+                out = os.path.join(out, safe_dir_name(self._collection_name))
 
             os.makedirs(out, exist_ok=True)
             return out
@@ -1935,11 +2044,9 @@ class LegacyDownloadWorker:
         def _do_track_dir():
             out = base
             if self._opts.use_artist_subfolders:
-                folder = re.sub(r'[<>:"/\\|?*]', "_", track.first_artist)
-                out = os.path.join(out, folder)
+                out = os.path.join(out, safe_dir_name(track.first_artist))
             if self._opts.use_album_subfolders:
-                folder = re.sub(r'[<>:"/\\|?*]', "_", track.album)
-                out = os.path.join(out, folder)
+                out = os.path.join(out, safe_dir_name(track.album))
             os.makedirs(out, exist_ok=True)
             return out
 
@@ -2049,15 +2156,53 @@ class MornyeDownloader:
             return
 
         pending = await self._resolve_isrc_bulk_async(tracks)
+        existing_paths = await self._library_matches_async(pending)
+        playlist_file = "append" if self._opts.library_dir else None
         try:
             while True:
-                failed = await self._run_worker_async(pending, "", {}, False, False)
+                failed = await self._run_worker_async(
+                    pending,
+                    "",
+                    {},
+                    False,
+                    False,
+                    existing_paths=existing_paths,
+                    playlist_file=playlist_file,
+                )
                 if not loop_minutes or loop_minutes <= 0 or not failed:
                     break
                 await asyncio.sleep(loop_minutes * 60)
                 pending = failed
         finally:
             await _close_shared_browser_sessions()
+
+    async def _library_matches_async(
+        self, tracks: list[TrackMetadata]
+    ) -> dict[str, Path]:
+        """Tracks already somewhere in `opts.library_dir`, by track id.
+
+        Only set when `output_dir` is one playlist's folder inside a bigger
+        library: a followed playlist's new tracks are looked up across every
+        playlist folder, so one that another playlist already has is linked
+        from the M3U instead of downloaded twice (issue #267).
+        """
+        library_dir = self._opts.library_dir
+        if not library_dir or not await asyncio.to_thread(os.path.isdir, library_dir):
+            return {}
+        index = await asyncio.to_thread(index_audio_files, library_dir)
+        matches: dict[str, Path] = {}
+        for position, track in enumerate(tracks, 1):
+            if not track.id:
+                continue
+            existing = find_existing_track(
+                index,
+                track,
+                track_stem(track, self._opts, position),
+                self._opts.transcode_to,
+            )
+            if existing is not None:
+                matches[track.id] = existing
+        return matches
 
     async def _resolve_track_list_async(
         self,
@@ -2940,7 +3085,14 @@ class MornyeDownloader:
         is_playlist: bool,
         opts: DownloadOptions | None = None,
         existing_paths: dict[str, Path] | None = None,
+        playlist_file: str | None = None,
     ) -> list[TrackMetadata]:
+        """Runs one worker over `tracks`.
+
+        `playlist_file` is "rewrite" for a whole playlist (its M3U is written
+        afresh in playlist order) or "append" for loose tracks that belong to
+        a playlist folder (they are added to the M3U already there).
+        """
         effective = opts if opts is not None else self._opts
         updated_tracks = await self._register_queue_async(tracks)
 
@@ -2955,8 +3107,60 @@ class MornyeDownloader:
 
         failed_tuples = await worker.run_async()
         self._last_results = worker.results
+        if playlist_file is not None:
+            await self._write_run_playlist_file_async(
+                effective,
+                playlist_file,
+                collection_name,
+                updated_tracks,
+                worker,
+            )
         failed_ids = {f[0] for f in failed_tuples}
         return [t for t in updated_tracks if t.id in failed_ids]
+
+    @staticmethod
+    async def _write_run_playlist_file_async(
+        opts: DownloadOptions,
+        mode: str,
+        collection_name: str,
+        tracks: list[TrackMetadata],
+        worker: LegacyDownloadWorker,
+    ) -> None:
+        """Writes the M3U for a playlist run. Never fails the download.
+
+        Paths are relative to the playlist file, so a track that is already
+        in another playlist's folder is listed as ``../Other/Track.flac``
+        rather than downloaded again (issue #267).
+        """
+        fmt = (opts.m3u_format or "").lower()
+        base_out = worker.output_dir
+        if fmt not in M3U_FORMATS or opts.output_path or not base_out:
+            return
+        completed = worker.completed_paths
+        entries = [
+            entry_for(track, Path(completed[track.id]))
+            for track in tracks
+            if completed.get(track.id)
+        ]
+        if not entries and mode != "rewrite":
+            return
+        name = collection_name.strip() or Path(base_out).name
+        safe_name = re.sub(r'[<>:"/\\|?*]', "_", name).strip() or "playlist"
+        target = Path(base_out) / f"{safe_name}.{fmt}"
+        try:
+            if mode == "append":
+                existing = ""
+                if await asyncio.to_thread(target.is_file):
+                    existing = await asyncio.to_thread(
+                        target.read_text, encoding="utf-8"
+                    )
+                content = append_m3u(existing, entries, target)
+            else:
+                content = render_m3u(entries, target)
+            if await write_if_changed_async(target, content):
+                logger.info("[m3u] Wrote %d track(s) to %s", len(entries), target)
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("[m3u] Could not write %s: %s", target, exc)
 
     async def _run_once_async(
         self,
@@ -3050,6 +3254,7 @@ class MornyeDownloader:
             is_playlist,
             opts=effective_opts,
             existing_paths=existing_paths,
+            playlist_file="rewrite" if is_playlist else None,
         )
 
     @staticmethod
